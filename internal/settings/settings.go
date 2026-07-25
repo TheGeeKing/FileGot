@@ -7,7 +7,7 @@ import (
 
 	"fyne.io/fyne/v2"
 
-	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/thegeeking/FileGot/internal/media"
 )
 
 const (

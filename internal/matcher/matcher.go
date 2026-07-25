@@ -10,9 +10,9 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/TheGeeKing/FileGot/internal/media"
-	"github.com/TheGeeKing/FileGot/internal/settings"
-	"github.com/TheGeeKing/FileGot/internal/tmdb"
+	"github.com/thegeeking/FileGot/internal/media"
+	"github.com/thegeeking/FileGot/internal/settings"
+	"github.com/thegeeking/FileGot/internal/tmdb"
 )
 
 var nonAlphanumeric = regexp.MustCompile(`[^\pL\pN]+`)
