@@ -23,6 +23,14 @@ go run ./cmd/filegot
 Open **Settings** and enter a TMDB Read Access Token. **Test Connection**
 validates it and loads TMDB's supported metadata languages.
 
+## Build
+
+Create a Windows GUI executable without an additional console window:
+
+```powershell
+.\build-windows.ps1
+```
+
 ## Verify
 
 ```powershell
@@ -30,7 +38,7 @@ gofmt -w cmd internal
 go vet ./...
 go test ./...
 go test -race ./...
-go build -o FileGot.exe ./cmd/filegot
+.\build-windows.ps1
 ```
 
 The first Fyne build compiles native graphics dependencies and can take
