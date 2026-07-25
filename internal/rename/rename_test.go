@@ -71,6 +71,18 @@ func TestCollisionRefused(t *testing.T) {
 	}
 }
 
+func TestNoChangeRefused(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "same.mkv")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(filepath.Join(root, "history.json"))
+	if err := manager.Apply([]Operation{{From: path, To: path}}); err == nil {
+		t.Fatal("no-op batch should be refused")
+	}
+}
+
 func TestRollbackOnFailure(t *testing.T) {
 	root := t.TempDir()
 	first := filepath.Join(root, "first.mkv")

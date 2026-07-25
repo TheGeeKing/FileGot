@@ -59,7 +59,7 @@ func (manager *Manager) Apply(operations []Operation) error {
 		return err
 	}
 	if len(record.Ops) == 0 {
-		return nil
+		return errors.New("no filename changes to apply")
 	}
 	if err := manager.writeJournal(record); err != nil {
 		return fmt.Errorf("write rename journal: %w", err)
@@ -69,7 +69,11 @@ func (manager *Manager) Apply(operations []Operation) error {
 	}
 	record.State = "applied"
 	if err := manager.writeJournal(record); err != nil {
-		return fmt.Errorf("rename succeeded but durable undo could not be finalized: %w", err)
+		rollbackErr := manager.rollback(record)
+		if rollbackErr == nil {
+			_ = os.Remove(manager.journalPath)
+		}
+		return errors.Join(fmt.Errorf("durable undo could not be finalized; rename was reverted: %w", err), rollbackErr)
 	}
 	return nil
 }
