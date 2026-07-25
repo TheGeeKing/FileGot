@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode"
 
 	"github.com/thegeeking/FileGot/internal/media"
 	"github.com/thegeeking/FileGot/internal/settings"
@@ -208,12 +207,7 @@ func automaticCandidate(parsed media.Parsed, candidates []media.Candidate) (medi
 
 func normalize(value string) string {
 	value = strings.ToLower(nonAlphanumeric.ReplaceAllString(value, " "))
-	return strings.Map(func(character rune) rune {
-		if unicode.IsSpace(character) {
-			return ' '
-		}
-		return character
-	}, strings.Join(strings.Fields(value), " "))
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func dateYear(value string) int {
