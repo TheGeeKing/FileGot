@@ -29,9 +29,11 @@ func Parse(path string) Parsed {
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 
 	if match := multiEpisodePattern.FindStringSubmatch(base); match != nil {
+		query, year := titleAndYear(base[:strings.Index(strings.ToLower(base), strings.ToLower(match[0]))])
 		return Parsed{
 			Kind:         Episode,
-			Query:        cleanTitle(base[:strings.Index(strings.ToLower(base), strings.ToLower(match[0]))]),
+			Query:        query,
+			Year:         year,
 			Season:       atoi(match[1]),
 			Episode:      atoi(match[2]),
 			MultiEpisode: true,
@@ -40,25 +42,31 @@ func Parse(path string) Parsed {
 
 	for _, pattern := range []*regexp.Regexp{seasonEpisodePattern, xEpisodePattern} {
 		if match := pattern.FindStringSubmatch(base); match != nil {
+			query, year := titleAndYear(match[1])
 			return Parsed{
 				Kind:    Episode,
-				Query:   cleanTitle(match[1]),
+				Query:   query,
+				Year:    year,
 				Season:  atoi(match[2]),
 				Episode: atoi(match[3]),
 			}
 		}
 	}
 
+	query, year := titleAndYear(base)
+	return Parsed{Kind: Movie, Query: query, Year: year}
+}
+
+func titleAndYear(value string) (string, int) {
 	year := 0
-	if match := yearPattern.FindStringSubmatch(base); match != nil {
+	if match := yearPattern.FindStringSubmatch(value); match != nil {
 		candidate := atoi(match[1])
 		if candidate <= time.Now().Year()+1 {
 			year = candidate
-			base = strings.Replace(base, match[1], " ", 1)
+			value = strings.Replace(value, match[1], " ", 1)
 		}
 	}
-
-	return Parsed{Kind: Movie, Query: cleanTitle(base), Year: year}
+	return cleanTitle(value), year
 }
 
 func cleanTitle(value string) string {

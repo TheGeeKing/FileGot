@@ -24,6 +24,11 @@ func TestParse(t *testing.T) {
 			want: Parsed{Kind: Episode, Query: "The Last of Us", Season: 1, Episode: 3},
 		},
 		{
+			name: "series year",
+			path: "Doctor.Who.2005.S01E03.1080p.mkv",
+			want: Parsed{Kind: Episode, Query: "Doctor Who", Year: 2005, Season: 1, Episode: 3},
+		},
+		{
 			name: "x episode",
 			path: "Spaced 2x04 HDTV.avi",
 			want: Parsed{Kind: Episode, Query: "Spaced", Season: 2, Episode: 4},
