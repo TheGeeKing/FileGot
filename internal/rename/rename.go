@@ -166,7 +166,7 @@ func preflight(operations []Operation) error {
 		if err != nil {
 			return err
 		}
-		if filepath.Dir(from) != filepath.Dir(to) {
+		if !samePath(filepath.Dir(from), filepath.Dir(to)) {
 			return fmt.Errorf("destination must stay in the source directory: %s", to)
 		}
 		info, err := os.Stat(from)
@@ -178,13 +178,13 @@ func preflight(operations []Operation) error {
 		}
 
 		sourceKey := pathKey(from)
-		if previous, exists := sources[sourceKey]; exists && previous != from {
+		if previous, exists := sources[sourceKey]; exists {
 			return fmt.Errorf("duplicate source paths: %s and %s", previous, from)
 		}
 		sources[sourceKey] = from
 
 		destinationKey := pathKey(to)
-		if previous, exists := destinations[destinationKey]; exists && pathKey(previous) != sourceKey {
+		if previous, exists := destinations[destinationKey]; exists {
 			return fmt.Errorf("duplicate destination paths: %s and %s", previous, to)
 		}
 		destinations[destinationKey] = to

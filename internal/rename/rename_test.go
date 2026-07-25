@@ -83,6 +83,25 @@ func TestNoChangeRefused(t *testing.T) {
 	}
 }
 
+func TestDuplicateSourceRefused(t *testing.T) {
+	root := t.TempDir()
+	from := filepath.Join(root, "same.mkv")
+	if err := os.WriteFile(from, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(filepath.Join(root, "history.json"))
+	err := manager.Apply([]Operation{
+		{From: from, To: filepath.Join(root, "one.mkv")},
+		{From: from, To: filepath.Join(root, "two.mkv")},
+	})
+	if err == nil {
+		t.Fatal("duplicate source should be refused")
+	}
+	if !exists(from) {
+		t.Fatal("duplicate source check changed the file")
+	}
+}
+
 func TestRollbackOnFailure(t *testing.T) {
 	root := t.TempDir()
 	first := filepath.Join(root, "first.mkv")
