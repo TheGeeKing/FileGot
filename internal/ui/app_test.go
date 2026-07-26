@@ -725,6 +725,20 @@ func TestAdvancedTemplateEntryMouseCompletionPlacesCursor(t *testing.T) {
 	if len(cursorMoves) == 0 || cursorMoves[len(cursorMoves)-1] != entry.CursorTextOffset() {
 		t.Fatalf("rendered cursor did not move inside accepted argument completion: %v", cursorMoves)
 	}
+
+	entry.SetText(`{" ($y.`)
+	entry.CursorColumn = len([]rune(entry.Text))
+	entry.refreshAssist()
+	replace := slices.IndexFunc(entry.completions, func(completion media.AdvancedTemplateCompletion) bool {
+		return completion.Name == "replace"
+	})
+	if replace < 0 {
+		t.Fatal("replace completion missing from integer interpolation")
+	}
+	test.Tap(entry.completionButtons[replace])
+	if entry.Text != `{" ($y.replace()` || entry.signature == nil || entry.signature.Name != "replace" {
+		t.Fatalf("interpolation completion = %q with signature %#v", entry.Text, entry.signature)
+	}
 }
 
 func TestAdvancedTemplateEntryFiltersAndTracksSignatureParameters(t *testing.T) {

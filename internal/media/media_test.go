@@ -178,6 +178,18 @@ func TestFormatAdvancedConditionals(t *testing.T) {
 	}
 }
 
+func TestFormatAdvancedInterpolationMethods(t *testing.T) {
+	got, err := FormatAdvanced(`{"Year $y.replace('2', '3')"}`, "movie.mkv", Candidate{
+		Kind: Movie, Title: "Dune", Year: 2024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Year 3034.mkv"; got != want {
+		t.Fatalf("FormatAdvanced() = %q, want %q", got, want)
+	}
+}
+
 func TestAdvancedTemplateHelpers(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -317,6 +329,11 @@ func TestAdvancedTemplateCompletions(t *testing.T) {
 			replacement: [2]int{3, 3},
 		},
 		{
+			name: "interpolation methods", kind: Movie, pattern: `{" ($y.`, cursor: len([]rune(`{" ($y.`)),
+			want:        []string{"default", "pad", "removeAll", "replace", "replaceAll", "roman"},
+			replacement: [2]int{len([]rune(`{" ($y.`)), len([]rune(`{" ($y.`))},
+		},
+		{
 			name: "chained method prefix", kind: Movie, pattern: `{n.space('.').re`, cursor: 16,
 			want: []string{"removeAll", "replace", "replaceAll"}, replacement: [2]int{14, 16},
 		},
@@ -356,10 +373,14 @@ func TestAdvancedTemplateCompletions(t *testing.T) {
 			if !slices.Equal(names, test.want) {
 				t.Fatalf("completions = %v, want %v", names, test.want)
 			}
-			if test.name == "integer methods" {
+			if test.name == "integer methods" || test.name == "interpolation methods" {
+				prefix := "{y."
+				if test.name == "interpolation methods" {
+					prefix = `{"$y.`
+				}
 				for _, completion := range got {
-					if !strings.HasPrefix(completion.Syntax, "{y.") {
-						t.Fatalf("integer completion example = %q, want y receiver", completion.Syntax)
+					if !strings.HasPrefix(completion.Syntax, prefix) {
+						t.Fatalf("completion example = %q, want prefix %q", completion.Syntax, prefix)
 					}
 				}
 			}
@@ -394,6 +415,11 @@ func TestAdvancedTemplateSignatureHelp(t *testing.T) {
 		},
 		{
 			name: "integer receiver", kind: Movie, pattern: `{y.replace(`, cursor: 11,
+			method: "replace", parameter: 0,
+		},
+		{
+			name: "interpolation receiver", kind: Movie,
+			pattern: `{" ($y.replace(`, cursor: len([]rune(`{" ($y.replace(`)),
 			method: "replace", parameter: 0,
 		},
 		{

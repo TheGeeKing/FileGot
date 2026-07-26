@@ -448,8 +448,14 @@ func AdvancedTemplateCatalog(kind Kind) []AdvancedTemplateSyntax {
 func AdvancedTemplateCompletions(kind Kind, pattern string, cursor int) []AdvancedTemplateCompletion {
 	runes := []rune(pattern)
 	start, inLiteral := advancedExpressionAt(runes, cursor)
-	if start < 0 || inLiteral {
+	if start < 0 {
 		return nil
+	}
+	if inLiteral {
+		if !advancedOuterString(runes[start+1 : cursor]) {
+			return nil
+		}
+		return advancedInterpolationCompletions(kind, runes, start, cursor)
 	}
 
 	expression := runes[start+1 : cursor]
@@ -491,6 +497,46 @@ func AdvancedTemplateCompletions(kind Kind, pattern string, cursor int) []Advanc
 		advancedIdentifierEnd(runes, cursor),
 		base,
 	)
+}
+
+func advancedInterpolationCompletions(kind Kind, pattern []rune, start, cursor int) []AdvancedTemplateCompletion {
+	for dollar := cursor - 1; dollar > start; dollar-- {
+		if pattern[dollar] != '$' {
+			continue
+		}
+		expression := pattern[dollar+1 : cursor]
+		dot := advancedTopLevelDot(expression)
+		if dot < 0 || !advancedIdentifier(expression[dot+1:]) {
+			continue
+		}
+		base := strings.TrimSpace(string(expression[:dot]))
+		normalized, err := normalizeFileBotExpression(base)
+		if err != nil {
+			continue
+		}
+		node, err := parser.ParseExpr(normalized)
+		if err != nil {
+			continue
+		}
+		_, _, _, receiverType, _, err := compileFileBotNode(kind, node)
+		if err != nil {
+			continue
+		}
+		completions := advancedCompletions(
+			fileBotMethodSyntax(receiverType),
+			string(expression[dot+1:]),
+			dollar+1+dot+1,
+			advancedIdentifierEnd(pattern, cursor),
+			base,
+		)
+		for index := range completions {
+			completions[index].Syntax = `{"$` +
+				strings.TrimSuffix(strings.TrimPrefix(completions[index].Syntax, "{"), "}") +
+				`"}`
+		}
+		return completions
+	}
+	return nil
 }
 
 type advancedLiteralState struct {
@@ -538,7 +584,7 @@ func (state advancedLiteralState) active() bool {
 
 func AdvancedTemplateSignatureHelp(kind Kind, pattern string, cursor int) *AdvancedTemplateSignature {
 	runes := []rune(pattern)
-	start, _ := advancedExpressionAt(runes, cursor)
+	start, inLiteral := advancedExpressionAt(runes, cursor)
 	if start < 0 {
 		return nil
 	}
@@ -551,6 +597,19 @@ func AdvancedTemplateSignatureHelp(kind Kind, pattern string, cursor int) *Advan
 	var calls []call
 	var literal advancedLiteralState
 	expression := runes[start+1 : cursor]
+	if inLiteral && advancedOuterString(expression) {
+		dollar := -1
+		for index := len(expression) - 1; index >= 0; index-- {
+			if expression[index] == '$' {
+				dollar = index
+				break
+			}
+		}
+		if dollar < 0 {
+			return nil
+		}
+		expression = expression[dollar+1:]
+	}
 	for index, character := range expression {
 		if literal.consume(character) {
 			continue
@@ -588,6 +647,16 @@ func AdvancedTemplateSignatureHelp(kind Kind, pattern string, cursor int) *Advan
 		}
 	}
 	return nil
+}
+
+func advancedOuterString(expression []rune) bool {
+	for _, character := range expression {
+		if unicode.IsSpace(character) {
+			continue
+		}
+		return character == '\'' || character == '"'
+	}
+	return false
 }
 
 func advancedExpressionAt(pattern []rune, cursor int) (int, bool) {
@@ -1247,8 +1316,9 @@ func compileFileBotArgument(node ast.Expr) (fileBotArgument, error) {
 
 func compileInterpolation(kind Kind, value string) (string, error) {
 	type part struct {
-		value string
-		field string
+		value    string
+		field    string
+		pipeline string
 	}
 	var parts []part
 	var fields []string
@@ -1289,13 +1359,21 @@ func compileInterpolation(kind Kind, value string) (string, error) {
 		if index == nameStart {
 			return "", fmt.Errorf("invalid interpolation")
 		}
-		name := value[nameStart:index]
-		binding, ok := fileBotBindingByName(kind, name)
-		if !ok {
-			return "", fmt.Errorf("binding %s is not available for %s names", name, kind)
+		index = interpolationExpressionEnd(value, index)
+		normalized, err := normalizeFileBotExpression(value[nameStart:index])
+		if err != nil {
+			return "", err
 		}
-		parts = append(parts, part{field: binding.field})
-		fields = appendUnique(fields, binding.field)
+		node, err := parser.ParseExpr(normalized)
+		if err != nil {
+			return "", fmt.Errorf("invalid interpolation expression")
+		}
+		field, _, pipeline, _, _, err := compileFileBotNode(kind, node)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, part{field: field, pipeline: pipeline})
+		fields = appendUnique(fields, field)
 		start = index
 	}
 	if start < len(value) {
@@ -1319,6 +1397,7 @@ func compileInterpolation(kind Kind, value string) (string, error) {
 		if current.field != "" {
 			compiled.WriteString("{{.")
 			compiled.WriteString(current.field)
+			compiled.WriteString(current.pipeline)
 			compiled.WriteString("}}")
 		} else {
 			writeTemplateLiteral(&compiled, current.value)
@@ -1328,6 +1407,44 @@ func compileInterpolation(kind Kind, value string) (string, error) {
 		compiled.WriteString("{{end}}")
 	}
 	return compiled.String(), nil
+}
+
+func interpolationExpressionEnd(value string, end int) int {
+	for end < len(value) && value[end] == '.' {
+		nameEnd := end + 1
+		for nameEnd < len(value) && isIdentifierPart(value[nameEnd]) {
+			nameEnd++
+		}
+		if nameEnd == end+1 || nameEnd == len(value) || value[nameEnd] != '(' {
+			break
+		}
+		callEnd, ok := interpolationCallEnd(value, nameEnd)
+		if !ok {
+			return len(value)
+		}
+		end = callEnd
+	}
+	return end
+}
+
+func interpolationCallEnd(value string, opening int) (int, bool) {
+	depth := 0
+	var literal advancedLiteralState
+	for index, character := range value[opening:] {
+		if literal.consume(character) {
+			continue
+		}
+		switch character {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return opening + index + 1, true
+			}
+		}
+	}
+	return 0, false
 }
 
 type fileBotArgument struct {
