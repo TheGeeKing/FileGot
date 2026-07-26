@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,14 +35,16 @@ type Application struct {
 	clientToken string
 	client      *tmdb.Client
 
-	files    []media.File
-	table    *widget.Table
-	empty    fyne.CanvasObject
-	status   *widget.Label
-	details  *widget.Label
-	selected int
-	cancel   context.CancelFunc
-	busy     bool
+	files         []media.File
+	table         *widget.Table
+	empty         fyne.CanvasObject
+	status        *widget.Label
+	details       *widget.Label
+	selected      int
+	sortColumn    int
+	sortAscending bool
+	cancel        context.CancelFunc
+	busy          bool
 
 	addFileButton        *widget.Button
 	addFolderButton      *widget.Button
@@ -58,7 +61,8 @@ type Application struct {
 
 func New(app fyne.App, store *settings.Store, renamer *rename.Manager) *Application {
 	application := &Application{
-		app: app, window: app.NewWindow("FileGot"), settings: store, renamer: renamer, selected: -1,
+		app: app, window: app.NewWindow("FileGot"), settings: store, renamer: renamer,
+		selected: -1, sortColumn: -1,
 	}
 	application.build()
 	return application
@@ -118,41 +122,36 @@ func (application *Application) build() {
 			if id.Row == 0 {
 				background.FillColor = theme.ColorForWidget(theme.ColorNameHeaderBackground, application.table)
 				background.Refresh()
-				label.SetText([]string{"Original File", "Status", "Proposed Name"}[id.Col])
+				header := []string{"Original File", "Status", "Proposed Name"}[id.Col]
+				if id.Col == application.sortColumn {
+					if application.sortAscending {
+						header += " ▲"
+					} else {
+						header += " ▼"
+					}
+				}
+				label.SetText(header)
 				return
 			}
 			file := application.files[id.Row-1]
 			if id.Row-1 == application.selected {
 				background.FillColor = theme.ColorForWidget(theme.ColorNameSelection, application.table)
-			} else if unchanged(file) {
-				background.FillColor = statusRowColor(
-					media.Unsupported,
-					theme.ColorForWidget(theme.ColorNameBackground, application.table),
-				)
 			} else {
 				background.FillColor = statusRowColor(
-					file.Status,
+					rowStatus(file),
 					theme.ColorForWidget(theme.ColorNameBackground, application.table),
 				)
 			}
 			background.Refresh()
-			switch id.Col {
-			case 0:
-				if file.Path == "" {
-					label.SetText("Expected episode")
-				} else {
-					label.SetText(filepath.Base(file.Path))
-				}
-			case 1:
-				label.SetText(string(file.Status))
-			case 2:
-				label.SetText(file.Proposed)
-			}
+			label.SetText(fileColumnText(file, id.Col))
 		},
 	)
 	application.table.StickyRowCount = 1
 	application.table.OnSelected = func(id widget.TableCellID) {
 		if id.Row == 0 {
+			if !application.busy {
+				application.sortFiles(id.Col)
+			}
 			application.table.Unselect(id)
 			return
 		}
@@ -249,6 +248,40 @@ func (application *Application) build() {
 	})
 	application.updateFileArea()
 	application.updateButtons()
+}
+
+func (application *Application) sortFiles(column int) {
+	application.sortAscending = column != application.sortColumn || !application.sortAscending
+	application.sortColumn = column
+	sort.SliceStable(application.files, func(left, right int) bool {
+		a := fileColumnText(application.files[left], column)
+		b := fileColumnText(application.files[right], column)
+		if column == 1 {
+			a = string(rowStatus(application.files[left]))
+			b = string(rowStatus(application.files[right]))
+		}
+		a = strings.ToLower(a)
+		b = strings.ToLower(b)
+		if application.sortAscending {
+			return a < b
+		}
+		return a > b
+	})
+	application.table.Refresh()
+}
+
+func fileColumnText(file media.File, column int) string {
+	switch column {
+	case 0:
+		if file.Path == "" {
+			return "Expected episode"
+		}
+		return filepath.Base(file.Path)
+	case 1:
+		return string(file.Status)
+	default:
+		return file.Proposed
+	}
 }
 
 func (application *Application) addFile() {
@@ -1206,6 +1239,13 @@ func matchSummary(files []media.File) string {
 
 func unchanged(file media.File) bool {
 	return file.Status == media.Ready && filepath.Base(file.Path) == file.Proposed
+}
+
+func rowStatus(file media.File) media.Status {
+	if unchanged(file) {
+		return media.Unsupported
+	}
+	return file.Status
 }
 
 func reviewParsed(kind, query, year, season, episode string) (media.Parsed, error) {

@@ -148,6 +148,63 @@ func TestMainWindowPresentation(t *testing.T) {
 	}
 }
 
+func TestTableColumnsSort(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	application := New(
+		app,
+		settings.NewStore(app.Preferences()),
+		rename.NewManager(filepath.Join(t.TempDir(), "last-rename.json")),
+	)
+	application.files = []media.File{
+		{Path: "zeta.mkv", Status: media.Review, Proposed: "beta.mkv"},
+		{Path: "Alpha.mkv", Status: media.Ready, Proposed: "zeta.mkv"},
+		{Path: "middle.mkv", Status: media.Error, Proposed: "alpha.mkv"},
+	}
+
+	application.table.Select(widget.TableCellID{Row: 0, Col: 0})
+	if got := []string{
+		filepath.Base(application.files[0].Path),
+		filepath.Base(application.files[1].Path),
+		filepath.Base(application.files[2].Path),
+	}; !slices.Equal(got, []string{"Alpha.mkv", "middle.mkv", "zeta.mkv"}) {
+		t.Fatalf("original file ascending = %v", got)
+	}
+	header := application.table.CreateCell()
+	application.table.UpdateCell(widget.TableCellID{Row: 0, Col: 0}, header)
+	_, label := fileCellParts(header)
+	if label.Text != "Original File ▲" {
+		t.Fatalf("ascending header = %q", label.Text)
+	}
+
+	application.table.Select(widget.TableCellID{Row: 0, Col: 0})
+	if got := filepath.Base(application.files[0].Path); got != "zeta.mkv" {
+		t.Fatalf("original file descending starts with %q", got)
+	}
+	application.table.UpdateCell(widget.TableCellID{Row: 0, Col: 0}, header)
+	if label.Text != "Original File ▼" {
+		t.Fatalf("descending header = %q", label.Text)
+	}
+
+	application.table.Select(widget.TableCellID{Row: 0, Col: 1})
+	if got := []media.Status{
+		application.files[0].Status,
+		application.files[1].Status,
+		application.files[2].Status,
+	}; !slices.Equal(got, []media.Status{media.Error, media.Ready, media.Review}) {
+		t.Fatalf("status ascending = %v", got)
+	}
+
+	application.table.Select(widget.TableCellID{Row: 0, Col: 2})
+	if got := []string{
+		application.files[0].Proposed,
+		application.files[1].Proposed,
+		application.files[2].Proposed,
+	}; !slices.Equal(got, []string{"alpha.mkv", "beta.mkv", "zeta.mkv"}) {
+		t.Fatalf("proposed name ascending = %v", got)
+	}
+}
+
 func TestReviewParsed(t *testing.T) {
 	parsed, err := reviewParsed("TV episode", "The Last of Us", "2023", "1", "3")
 	if err != nil {
@@ -414,7 +471,12 @@ func TestUnchangedFileIsNeutralAndSkipped(t *testing.T) {
 	if got := matchSummary(application.files); got != "Matching complete: 1 ready, 0 need review, 0 unmatched, 0 errors." {
 		t.Fatalf("match summary = %q", got)
 	}
-	application.files = application.files[1:]
+	application.table.Select(widget.TableCellID{Row: 0, Col: 1})
+	application.table.Select(widget.TableCellID{Row: 0, Col: 1})
+	if !unchanged(application.files[0]) {
+		t.Fatal("descending status sort should put neutral rows before ready rows")
+	}
+	application.files = application.files[:1]
 	if application.canRename() {
 		t.Fatal("unchanged file should not enable Rename")
 	}
