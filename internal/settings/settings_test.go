@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"fyne.io/fyne/v2/test"
+
+	"github.com/TheGeeKing/FileGot/internal/media"
 )
 
 func TestStoreRoundTrip(t *testing.T) {
@@ -48,5 +50,35 @@ func TestValidation(t *testing.T) {
 	value.Language = "english"
 	if err := store.Validate(value); err == nil {
 		t.Fatal("invalid locale should fail validation")
+	}
+}
+
+func TestAdvancedNamingValidationAndRendering(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := NewStore(app.Preferences())
+
+	value := Defaults()
+	value.TMDBToken = "token"
+	value.NamingMode = NamingAdvanced
+	value.MovieTemplate = `{n}{" ($y)"}`
+	value.EpisodeTemplate = `{n} - {s00e00}{" - $t"}`
+	if err := store.Validate(value); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := value.FormatName("movie.mkv", media.Candidate{
+		Kind: media.Movie, Title: "Dune: Part Two", Year: 2024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Dune Part Two (2024).mkv"; got != want {
+		t.Fatalf("FormatName() = %q, want %q", got, want)
+	}
+
+	value.MovieTemplate = `{n.unknown()}`
+	if err := store.Validate(value); err == nil {
+		t.Fatal("unsupported template action should fail validation")
 	}
 }

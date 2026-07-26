@@ -209,11 +209,7 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 		}
 	}
 
-	pattern := options.MoviePattern
-	if candidate.Kind == media.Episode {
-		pattern = options.EpisodePattern
-	}
-	proposed, err := media.Format(pattern, file.Path, candidate)
+	proposed, err := options.FormatName(file.Path, candidate)
 	if err != nil {
 		setError(&file, err)
 		return file

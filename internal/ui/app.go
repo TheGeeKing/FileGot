@@ -570,7 +570,7 @@ func (application *Application) importEpisodes(show tmdb.Show, episodes []tmdb.E
 		if _, duplicate := existing[key]; duplicate {
 			continue
 		}
-		proposed, err := media.Format(options.EpisodePattern, "", candidate)
+		proposed, err := options.FormatName("", candidate)
 		if err != nil {
 			return 0, err
 		}
@@ -692,7 +692,7 @@ func (application *Application) unpairExpected(index int) error {
 }
 
 func unpairedExpected(file media.File, options settings.Settings) (media.File, error) {
-	proposed, err := media.Format(options.EpisodePattern, "", file.Candidate)
+	proposed, err := options.FormatName("", file.Candidate)
 	if err != nil {
 		return media.File{}, err
 	}
@@ -709,7 +709,7 @@ func unpairedExpected(file media.File, options settings.Settings) (media.File, e
 }
 
 func pairEpisode(local, expected media.File, options settings.Settings) (media.File, error) {
-	proposed, err := media.Format(options.EpisodePattern, local.Path, expected.Candidate)
+	proposed, err := options.FormatName(local.Path, expected.Candidate)
 	if err != nil {
 		return media.File{}, err
 	}
@@ -1079,7 +1079,7 @@ func (application *Application) refreshProposedNames() error {
 		if !file.Imported {
 			continue
 		}
-		proposed, err := media.Format(options.EpisodePattern, file.Path, file.Candidate)
+		proposed, err := options.FormatName(file.Path, file.Candidate)
 		if err != nil {
 			return err
 		}

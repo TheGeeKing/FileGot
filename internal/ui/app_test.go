@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"fyne.io/fyne/v2"
@@ -545,6 +546,69 @@ func TestAllSeasonImportFiltersSpecialsAndFailsAtomically(t *testing.T) {
 	if err == nil || episodes != nil {
 		t.Fatalf("partial import should return no episodes: episodes=%#v err=%v", episodes, err)
 	}
+}
+
+func TestNamingReferenceTablesCoverCompatibleSyntax(t *testing.T) {
+	movie := namingReferenceRows(settings.NamingAdvanced, media.Movie)
+	episode := namingReferenceRows(settings.NamingAdvanced, media.Episode)
+
+	for _, syntax := range []string{"{n}", "{ny}", "{y}", "{primaryTitle}", "{tmdbid}"} {
+		if !hasNamingSyntax(movie, syntax) {
+			t.Errorf("movie reference is missing %s", syntax)
+		}
+	}
+	for _, syntax := range []string{"{n}", "{ny}", "{y}", "{s}", "{e}", "{sxe}", "{s00e00}", "{t}", "{primaryTitle}", "{tmdbid}"} {
+		if !hasNamingSyntax(episode, syntax) {
+			t.Errorf("episode reference is missing %s", syntax)
+		}
+	}
+	for _, method := range media.AdvancedTemplateMethods() {
+		for kind, rows := range map[string][]namingSyntaxRow{"movie": movie, "episode": episode} {
+			if !slices.ContainsFunc(rows, func(row namingSyntaxRow) bool {
+				return strings.Contains(row.Syntax, "."+method+"(")
+			}) {
+				t.Errorf("%s reference is missing %s", kind, method)
+			}
+		}
+	}
+	for _, syntax := range []string{
+		`{" ($y)"}`,
+		`$y or ${y}`,
+		`{n.space('.').lower()}`,
+		`{y ? " ($y)" : ""}`,
+		`!  &&  ||  ==  !=`,
+		`'text' or "text"`,
+		`/pattern/`,
+		`3`,
+	} {
+		if !hasNamingSyntax(movie, syntax) || !hasNamingSyntax(episode, syntax) {
+			t.Errorf("advanced references are missing %s", syntax)
+		}
+	}
+
+	if !hasNamingSyntax(namingReferenceRows(settings.NamingSimple, media.Movie), "{title}") {
+		t.Error("simple movie reference is missing {title}")
+	}
+	if !hasNamingSyntax(namingReferenceRows(settings.NamingSimple, media.Episode), "{series}") {
+		t.Error("simple episode reference is missing {series}")
+	}
+
+	table := newNamingReferenceTable(func() []namingSyntaxRow { return movie })
+	rows, columns := table.Length()
+	if rows != len(movie) || columns != 4 || !table.ShowHeaderRow || table.StickyRowCount != 0 {
+		t.Fatalf("reference table = %dx%d, header %t, sticky rows %d", rows, columns, table.ShowHeaderRow, table.StickyRowCount)
+	}
+	header := table.CreateHeader()
+	table.UpdateHeader(widget.TableCellID{Row: -1, Col: 0}, header)
+	if header.(*widget.Label).Text != "Syntax" {
+		t.Fatalf("first header = %q", header.(*widget.Label).Text)
+	}
+}
+
+func hasNamingSyntax(rows []namingSyntaxRow, syntax string) bool {
+	return slices.ContainsFunc(rows, func(row namingSyntaxRow) bool {
+		return row.Syntax == syntax && row.Description != "" && row.Example != "" && row.Type != ""
+	})
 }
 
 func expectedRows(files []media.File) (paired, unpaired int) {
