@@ -15,6 +15,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	value.TMDBToken = "token"
 	value.Language = "fr-FR"
 	value.MoviePattern = "{title}.{year}"
+	value.IncludeSpecials = false
 	if err := store.Save(value); err != nil {
 		t.Fatal(err)
 	}
@@ -25,6 +26,12 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 	if name := PresetName(got); name != PresetCustom {
 		t.Fatalf("PresetName() = %q, want Custom", name)
+	}
+}
+
+func TestDefaultsIncludeSpecials(t *testing.T) {
+	if !Defaults().IncludeSpecials {
+		t.Fatal("specials should be included by default")
 	}
 }
 

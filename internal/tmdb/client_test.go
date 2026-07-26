@@ -32,6 +32,37 @@ func TestClientSearchAndAuthorization(t *testing.T) {
 	}
 }
 
+func TestClientLoadsShowSeasonsAndEpisodes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if got := request.URL.Query().Get("language"); got != "fr-FR" {
+			t.Fatalf("language = %q", got)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/tv/42":
+			_, _ = writer.Write([]byte(`{"seasons":[{"id":1,"name":"Specials","season_number":0,"episode_count":2},{"id":2,"name":"Season 1","season_number":1,"episode_count":3}]}`))
+		case "/tv/42/season/1":
+			_, _ = writer.Write([]byte(`{"episodes":[{"id":3,"name":"Pilot","season_number":1,"episode_number":1}]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	client := NewWithHTTPClient("secret", server.URL, server.Client())
+	seasons, err := client.ShowSeasons(context.Background(), 42, "fr-FR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	episodes, err := client.SeasonEpisodes(context.Background(), 42, 1, "fr-FR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seasons) != 2 || seasons[0].SeasonNumber != 0 || len(episodes) != 1 || episodes[0].Name != "Pilot" {
+		t.Fatalf("seasons=%#v episodes=%#v", seasons, episodes)
+	}
+}
+
 func TestClientErrorAndCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusUnauthorized)

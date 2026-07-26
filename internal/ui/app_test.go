@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"context"
 	"image/color"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"fyne.io/fyne/v2"
@@ -12,9 +16,10 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/thegeeking/FileGot/internal/media"
-	"github.com/thegeeking/FileGot/internal/rename"
-	"github.com/thegeeking/FileGot/internal/settings"
+	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/rename"
+	"github.com/TheGeeKing/FileGot/internal/settings"
+	"github.com/TheGeeKing/FileGot/internal/tmdb"
 )
 
 func TestMainWindowPresentation(t *testing.T) {
@@ -156,6 +161,306 @@ func TestReviewParsed(t *testing.T) {
 	if _, err := reviewParsed("TV episode", "Show", "", "", "2"); err == nil {
 		t.Fatal("missing season should fail")
 	}
+}
+
+func TestExpectedEpisodeImportPairsAndDeduplicates(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{
+		Path:   `C:\media\Show.S01E01.MKV`,
+		Parsed: media.Parsed{Kind: media.Episode, Query: "Show", Season: 1, Episode: 1},
+	}}
+	show := tmdb.Show{ID: 42, Name: "Show", FirstAirDate: "2024-01-01"}
+
+	added, err := application.importEpisodes(show, []tmdb.Episode{
+		{ID: 101, Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1},
+		{ID: 102, Name: "Second", SeasonNumber: 1, EpisodeNumber: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 2 || len(application.files) != 2 {
+		t.Fatalf("added=%d files=%#v", added, application.files)
+	}
+	paired := application.files[0]
+	if !paired.IsEpisodePairing() || paired.Status != media.Ready || paired.Proposed != "Show - S01E01 - Pilot.MKV" {
+		t.Fatalf("paired row = %#v", paired)
+	}
+	expected := application.files[1]
+	if !expected.IsExpectedEpisode() || expected.Proposed != "Show - S01E02 - Second" {
+		t.Fatalf("expected row = %#v", expected)
+	}
+
+	added, err = application.importEpisodes(show, []tmdb.Episode{
+		{ID: 101, Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1},
+		{ID: 102, Name: "Second", SeasonNumber: 1, EpisodeNumber: 2},
+	})
+	if err != nil || added != 0 || len(application.files) != 2 {
+		t.Fatalf("duplicate import added=%d err=%v files=%#v", added, err, application.files)
+	}
+}
+
+func TestAutomaticPairingRefusesAmbiguousExpectedEpisodes(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	episode := []tmdb.Episode{{Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1}}
+	if _, err := application.importEpisodes(tmdb.Show{ID: 1, Name: "First"}, episode); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.importEpisodes(tmdb.Show{ID: 2, Name: "Second"}, episode); err != nil {
+		t.Fatal(err)
+	}
+	application.files = append(application.files, media.File{
+		Path: `C:\media\Unknown.S01E01.mkv`,
+		Parsed: media.Parsed{
+			Kind: media.Episode, Season: 1, Episode: 1,
+		},
+	})
+
+	application.reconcileExpectedEpisodes()
+
+	if application.files[2].Imported || application.files[2].Status == media.Ready {
+		t.Fatalf("ambiguous file should remain unpaired: %#v", application.files)
+	}
+}
+
+func TestAutomaticPairingHandlesMultipleFilesAddedAfterImport(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	if _, err := application.importEpisodes(tmdb.Show{ID: 1, Name: "Show"}, []tmdb.Episode{
+		{Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1},
+		{Name: "Second", SeasonNumber: 1, EpisodeNumber: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	application.files = append(application.files,
+		media.File{Path: `C:\media\Show.S01E01.mkv`, Parsed: media.Parsed{Kind: media.Episode, Season: 1, Episode: 1}},
+		media.File{Path: `C:\media\Show.S01E02.mkv`, Parsed: media.Parsed{Kind: media.Episode, Season: 1, Episode: 2}},
+	)
+
+	application.reconcileExpectedEpisodes()
+
+	paired := 0
+	for _, file := range application.files {
+		if file.IsEpisodePairing() {
+			paired++
+		}
+	}
+	if paired != 2 {
+		t.Fatalf("paired %d rows: %#v", paired, application.files)
+	}
+}
+
+func TestAutomaticPairingRefusesAmbiguousLocalFiles(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	if _, err := application.importEpisodes(tmdb.Show{ID: 1, Name: "Show"}, []tmdb.Episode{
+		{Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	parsed := media.Parsed{Kind: media.Episode, Season: 1, Episode: 1}
+	application.files = append(application.files,
+		media.File{Path: `C:\media\first.mkv`, Parsed: parsed},
+		media.File{Path: `C:\media\second.mkv`, Parsed: parsed},
+	)
+
+	application.reconcileExpectedEpisodes()
+
+	for _, file := range application.files {
+		if file.IsEpisodePairing() {
+			t.Fatalf("ambiguous local files should remain unpaired: %#v", application.files)
+		}
+	}
+}
+
+func TestManualExpectedPairingCanChangeAndRemove(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	episode := []tmdb.Episode{{Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1}}
+	if _, err := application.importEpisodes(tmdb.Show{ID: 1, Name: "First"}, episode); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.importEpisodes(tmdb.Show{ID: 2, Name: "Second"}, episode); err != nil {
+		t.Fatal(err)
+	}
+	application.files = append(application.files, media.File{
+		Path:   `C:\media\Unknown.S01E01.mkv`,
+		Parsed: media.Parsed{Kind: media.Episode, Season: 1, Episode: 1},
+	})
+
+	if err := application.pairExpected(2, 0); err != nil {
+		t.Fatal(err)
+	}
+	paired, other := expectedRows(application.files)
+	if paired < 0 || other < 0 || application.files[paired].Candidate.ID != 1 {
+		t.Fatalf("first manual pairing = %#v", application.files)
+	}
+	if err := application.pairExpected(paired, other); err != nil {
+		t.Fatal(err)
+	}
+	paired, other = expectedRows(application.files)
+	if paired < 0 || other < 0 || application.files[paired].Candidate.ID != 2 ||
+		application.files[other].Candidate.ID != 1 {
+		t.Fatalf("changed manual pairing = %#v", application.files)
+	}
+	if err := application.unpairExpected(paired); err != nil {
+		t.Fatal(err)
+	}
+	expectedCount, localCount := 0, 0
+	for _, file := range application.files {
+		if file.IsExpectedEpisode() {
+			expectedCount++
+		}
+		if !file.Imported && file.Path != "" {
+			localCount++
+		}
+	}
+	if expectedCount != 2 || localCount != 1 {
+		t.Fatalf("removed manual pairing = %#v", application.files)
+	}
+}
+
+func TestRenameIgnoresAndRetainsUnpairedExpectedEpisodes(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	application := New(
+		app,
+		settings.NewStore(app.Preferences()),
+		rename.NewManager(filepath.Join(t.TempDir(), "rename.json")),
+	)
+	application.files = []media.File{
+		{
+			Path: `C:\media\Show.S01E01.mkv`, Imported: true, Status: media.Ready,
+			Proposed: "Show - S01E01 - Pilot.mkv",
+		},
+		{Imported: true, Status: media.Expected, Proposed: "Show - S01E02 - Second"},
+	}
+
+	if !application.canRename() {
+		t.Fatal("unpaired expected episode should not block a ready rename")
+	}
+	operations := application.renameOperations()
+	if len(operations) != 1 || operations[0].From == "" {
+		t.Fatalf("rename operations = %#v", operations)
+	}
+	remaining := remainingAfterRename(application.files)
+	if len(remaining) != 1 || remaining[0].Path != "" || remaining[0].Status != media.Expected {
+		t.Fatalf("remaining rows = %#v", remaining)
+	}
+}
+
+func TestNamingPatternRefreshesExpectedAndPairedRows(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{
+		Path:   `C:\media\Show.S01E01.mp4`,
+		Parsed: media.Parsed{Kind: media.Episode, Season: 1, Episode: 1},
+	}}
+	show := tmdb.Show{ID: 42, Name: "Show"}
+	if _, err := application.importEpisodes(show, []tmdb.Episode{
+		{Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1},
+		{Name: "Second", SeasonNumber: 1, EpisodeNumber: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	options.EpisodePattern = "{series}.S{season}E{episode}.{episode_title}"
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := application.refreshProposedNames(); err != nil {
+		t.Fatal(err)
+	}
+
+	if application.files[0].Proposed != "Show.S01E01.Pilot.mp4" ||
+		application.files[1].Proposed != "Show.S01E02.Second" {
+		t.Fatalf("refreshed names = %#v", application.files)
+	}
+}
+
+func TestAllSeasonImportFiltersSpecialsAndFailsAtomically(t *testing.T) {
+	seasons := []tmdb.Season{
+		{Name: "Specials", SeasonNumber: 0},
+		{Name: "Season 1", SeasonNumber: 1},
+	}
+	if got := selectedSeasonNumbers(seasons, true); !slices.Equal(got, []int{0, 1}) {
+		t.Fatalf("with specials = %v", got)
+	}
+	if got := selectedSeasonNumbers(seasons, false); !slices.Equal(got, []int{1}) {
+		t.Fatalf("without specials = %v", got)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/tv/42/season/0" {
+			_, _ = writer.Write([]byte(`{"episodes":[{"name":"Special","season_number":0,"episode_number":1}]}`))
+			return
+		}
+		http.Error(writer, `{"status_message":"season unavailable"}`, http.StatusBadRequest)
+	}))
+	defer server.Close()
+	client := tmdb.NewWithHTTPClient("token", server.URL, server.Client())
+
+	episodes, err := loadShowEpisodes(context.Background(), client, 42, []int{0, 1}, "en-US")
+	if err == nil || episodes != nil {
+		t.Fatalf("partial import should return no episodes: episodes=%#v err=%v", episodes, err)
+	}
+}
+
+func expectedRows(files []media.File) (paired, unpaired int) {
+	paired, unpaired = -1, -1
+	for index, file := range files {
+		if file.IsEpisodePairing() {
+			paired = index
+		}
+		if file.IsExpectedEpisode() {
+			unpaired = index
+		}
+	}
+	return paired, unpaired
 }
 
 func fileCellParts(object fyne.CanvasObject) (*canvas.Rectangle, *widget.Label) {

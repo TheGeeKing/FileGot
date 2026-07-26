@@ -16,11 +16,11 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/thegeeking/FileGot/internal/matcher"
-	"github.com/thegeeking/FileGot/internal/media"
-	"github.com/thegeeking/FileGot/internal/rename"
-	"github.com/thegeeking/FileGot/internal/settings"
-	"github.com/thegeeking/FileGot/internal/tmdb"
+	"github.com/TheGeeKing/FileGot/internal/matcher"
+	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/rename"
+	"github.com/TheGeeKing/FileGot/internal/settings"
+	"github.com/TheGeeKing/FileGot/internal/tmdb"
 )
 
 type Application struct {
@@ -40,6 +40,7 @@ type Application struct {
 
 	addFileButton        *widget.Button
 	addFolderButton      *widget.Button
+	importShowButton     *widget.Button
 	emptyAddFileButton   *widget.Button
 	emptyAddFolderButton *widget.Button
 	removeButton         *widget.Button
@@ -117,7 +118,11 @@ func (application *Application) build() {
 			background.Refresh()
 			switch id.Col {
 			case 0:
-				label.SetText(filepath.Base(file.Path))
+				if file.Path == "" {
+					label.SetText("Expected episode")
+				} else {
+					label.SetText(filepath.Base(file.Path))
+				}
 			case 1:
 				label.SetText(string(file.Status))
 			case 2:
@@ -145,6 +150,7 @@ func (application *Application) build() {
 
 	application.addFileButton = widget.NewButtonWithIcon("Add File", theme.FileIcon(), application.addFile)
 	application.addFolderButton = widget.NewButtonWithIcon("Add Folder", theme.FolderOpenIcon(), application.addFolder)
+	application.importShowButton = widget.NewButtonWithIcon("Import Show", theme.ContentAddIcon(), application.importShow)
 	application.removeButton = widget.NewButtonWithIcon("Remove", theme.ContentRemoveIcon(), application.removeSelected)
 	application.clearButton = widget.NewButtonWithIcon("Clear", theme.ContentClearIcon(), application.clear)
 	application.matchButton = widget.NewButtonWithIcon("Match", theme.SearchIcon(), application.matchOrCancel)
@@ -154,6 +160,10 @@ func (application *Application) build() {
 	application.undoButton = widget.NewButtonWithIcon("Undo Last", theme.ContentUndoIcon(), application.undo)
 	showSettings := func() {
 		ShowSettings(application.app, application.settings, func() {
+			if err := application.refreshProposedNames(); err != nil {
+				dialog.ShowError(err, application.window)
+				return
+			}
 			application.setStatus("Settings saved.")
 			application.refresh()
 		})
@@ -168,6 +178,7 @@ func (application *Application) build() {
 	toolbar := container.NewHScroll(container.NewHBox(
 		application.addFileButton,
 		application.addFolderButton,
+		application.importShowButton,
 		widget.NewSeparator(),
 		application.removeButton,
 		application.clearButton,
@@ -247,6 +258,193 @@ func (application *Application) addFolder() {
 	}, application.window)
 }
 
+func (application *Application) importShow() {
+	if application.busy {
+		return
+	}
+	options := application.settings.Load()
+	if err := application.settings.Validate(options); err != nil {
+		dialog.ShowError(err, application.window)
+		return
+	}
+	client := tmdb.New(options.TMDBToken)
+	queryEntry := widget.NewEntry()
+	queryEntry.SetPlaceHolder("TV show title")
+	showSelect := widget.NewSelect(nil, nil)
+	seasonSelect := widget.NewSelect(nil, nil)
+	message := widget.NewLabel("Search for a show, select it, then load its seasons.")
+	message.Wrapping = fyne.TextWrapWord
+	var shows []tmdb.Show
+	var seasons []tmdb.Season
+	var importDialog dialog.Dialog
+
+	searchButton := widget.NewButton("Search TMDB", nil)
+	loadSeasonsButton := widget.NewButton("Load Seasons", nil)
+	importButton := widget.NewButton("Import Episodes", nil)
+	cancelButton := widget.NewButton("Cancel Request", func() {
+		if application.cancel != nil {
+			application.cancel()
+			message.SetText("Cancelling…")
+		}
+	})
+	closeButton := widget.NewButton("Close", func() {
+		if application.cancel != nil {
+			application.cancel()
+		}
+		importDialog.Hide()
+	})
+	setRequestState := func(running bool) {
+		application.busy = running
+		if !running {
+			application.cancel = nil
+		}
+		setEnabled(searchButton, !running)
+		setEnabled(loadSeasonsButton, !running && len(shows) > 0)
+		setEnabled(importButton, !running && len(seasons) > 0)
+		setEnabled(cancelButton, running)
+		application.updateButtons()
+	}
+	setRequestState(false)
+
+	searchButton.OnTapped = func() {
+		query := strings.TrimSpace(queryEntry.Text)
+		if query == "" {
+			message.SetText("Enter a TV show title.")
+			return
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		application.cancel = cancel
+		setRequestState(true)
+		message.SetText("Searching TMDB…")
+		go func() {
+			results, err := client.SearchTV(ctx, query, 0, options.Language, options.IncludeAdult)
+			fyne.Do(func() {
+				setRequestState(false)
+				if ctx.Err() != nil {
+					message.SetText("Search cancelled. Try again when ready.")
+					return
+				}
+				if err != nil {
+					message.SetText("Show search failed: " + err.Error())
+					return
+				}
+				shows = results
+				seasons = nil
+				labels := make([]string, len(results))
+				for index, show := range results {
+					labels[index] = fmt.Sprintf("%s (%s) — TMDB %d", show.Name, optionalDateYear(show.FirstAirDate), show.ID)
+				}
+				showSelect.SetOptions(labels)
+				seasonSelect.SetOptions(nil)
+				if len(labels) == 0 {
+					message.SetText("No shows found. Try a different title.")
+					return
+				}
+				showSelect.SetSelectedIndex(0)
+				loadSeasonsButton.Enable()
+				message.SetText(fmt.Sprintf("%d show(s) found. Select the correct result.", len(labels)))
+			})
+		}()
+	}
+
+	loadSeasonsButton.OnTapped = func() {
+		selected := showSelect.SelectedIndex()
+		if selected < 0 || selected >= len(shows) {
+			message.SetText("Select a show first.")
+			return
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		application.cancel = cancel
+		setRequestState(true)
+		message.SetText("Loading seasons…")
+		go func() {
+			results, err := client.ShowSeasons(ctx, shows[selected].ID, options.Language)
+			fyne.Do(func() {
+				setRequestState(false)
+				if ctx.Err() != nil {
+					message.SetText("Season loading cancelled. Existing rows were not changed.")
+					return
+				}
+				if err != nil {
+					message.SetText("Season loading failed: " + err.Error())
+					return
+				}
+				seasons = results
+				labels := []string{"All seasons"}
+				for _, season := range results {
+					labels = append(labels, fmt.Sprintf("%s (%d episodes)", season.Name, season.EpisodeCount))
+				}
+				seasonSelect.SetOptions(labels)
+				seasonSelect.SetSelectedIndex(0)
+				importButton.Enable()
+				message.SetText("Choose one season or All seasons.")
+			})
+		}()
+	}
+
+	importButton.OnTapped = func() {
+		showIndex := showSelect.SelectedIndex()
+		seasonIndex := seasonSelect.SelectedIndex()
+		if showIndex < 0 || showIndex >= len(shows) || seasonIndex < 0 {
+			message.SetText("Select a show and season first.")
+			return
+		}
+		var numbers []int
+		if seasonIndex == 0 {
+			numbers = selectedSeasonNumbers(seasons, options.IncludeSpecials)
+		} else if seasonIndex-1 < len(seasons) {
+			numbers = []int{seasons[seasonIndex-1].SeasonNumber}
+		}
+		if len(numbers) == 0 {
+			message.SetText("The selected show has no importable seasons.")
+			return
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		application.cancel = cancel
+		setRequestState(true)
+		message.SetText("Loading episodes…")
+		go func(show tmdb.Show) {
+			episodes, err := loadShowEpisodes(ctx, client, show.ID, numbers, options.Language)
+			fyne.Do(func() {
+				setRequestState(false)
+				if ctx.Err() != nil {
+					message.SetText("Episode import cancelled. Existing rows were not changed.")
+					return
+				}
+				if err != nil {
+					message.SetText("Episode import failed; existing rows were not changed: " + err.Error())
+					return
+				}
+				if len(episodes) == 0 {
+					message.SetText("The selected season returned no episodes; existing rows were not changed.")
+					return
+				}
+				added, err := application.importEpisodes(show, episodes)
+				if err != nil {
+					message.SetText("Episode import failed: " + err.Error())
+					return
+				}
+				importDialog.Hide()
+				application.setStatus(fmt.Sprintf("Imported %d expected episode(s).", added))
+				application.refresh()
+			})
+		}(shows[showIndex])
+	}
+
+	content := container.NewVBox(
+		widget.NewForm(
+			widget.NewFormItem("Search", queryEntry),
+			widget.NewFormItem("Show", showSelect),
+			widget.NewFormItem("Season", seasonSelect),
+		),
+		message,
+		container.NewHBox(searchButton, loadSeasonsButton, importButton, cancelButton, closeButton),
+	)
+	importDialog = dialog.NewCustomWithoutButtons("Import Show", content, application.window)
+	importDialog.Resize(fyne.NewSize(720, 420))
+	importDialog.Show()
+}
+
 func (application *Application) addPaths(paths []string) {
 	if len(paths) == 0 {
 		return
@@ -274,6 +472,7 @@ func (application *Application) addPaths(paths []string) {
 		added++
 	}
 	application.setStatus(fmt.Sprintf("Added %d video file(s).", added))
+	application.reconcileExpectedEpisodes()
 	application.refresh()
 
 	if added > 0 && options.AutoMatch {
@@ -283,6 +482,232 @@ func (application *Application) addPaths(paths []string) {
 		}
 		application.startMatch()
 	}
+}
+
+func (application *Application) importEpisodes(show tmdb.Show, episodes []tmdb.Episode) (int, error) {
+	options := application.settings.Load()
+	existing := make(map[string]struct{}, len(application.files))
+	for _, file := range application.files {
+		if file.Imported {
+			existing[expectedKey(file.Candidate)] = struct{}{}
+		}
+	}
+
+	title := show.Name
+	if options.PreferOriginalTitle && show.OriginalName != "" {
+		title = show.OriginalName
+	}
+	if title == "" {
+		title = show.OriginalName
+	}
+	imported := make([]media.File, 0, len(episodes))
+	for _, episode := range episodes {
+		candidate := media.Candidate{
+			ID: show.ID, Kind: media.Episode, Title: title, OriginalTitle: show.OriginalName,
+			SeriesYear: dateYear(show.FirstAirDate), Season: episode.SeasonNumber, Episode: episode.EpisodeNumber,
+			EpisodeTitle: episode.Name,
+		}
+		if options.PreferOriginalTitle && episode.OriginalName != "" {
+			candidate.EpisodeTitle = episode.OriginalName
+		}
+		if candidate.EpisodeTitle == "" {
+			candidate.EpisodeTitle = fmt.Sprintf("Episode %02d", episode.EpisodeNumber)
+		}
+		key := expectedKey(candidate)
+		if _, duplicate := existing[key]; duplicate {
+			continue
+		}
+		proposed, err := media.Format(options.EpisodePattern, "", candidate)
+		if err != nil {
+			return 0, err
+		}
+		existing[key] = struct{}{}
+		imported = append(imported, media.File{
+			Imported: true,
+			Parsed: media.Parsed{
+				Kind: media.Episode, Query: title, Year: candidate.SeriesYear,
+				Season: candidate.Season, Episode: candidate.Episode,
+			},
+			Candidate: candidate, Proposed: proposed, Status: media.Expected,
+			Message: "waiting for a local file",
+		})
+	}
+
+	application.files = append(application.files, imported...)
+	application.reconcileExpectedEpisodes()
+	return len(imported), nil
+}
+
+func (application *Application) reconcileExpectedEpisodes() {
+	options := application.settings.Load()
+	for localIndex := 0; localIndex < len(application.files); localIndex++ {
+		local := application.files[localIndex]
+		if !isUnpairedEpisodeFile(local) {
+			continue
+		}
+
+		localMatches := 0
+		for _, candidate := range application.files {
+			if isUnpairedEpisodeFile(candidate) &&
+				candidate.Parsed.Season == local.Parsed.Season && candidate.Parsed.Episode == local.Parsed.Episode {
+				localMatches++
+			}
+		}
+		if localMatches != 1 {
+			continue
+		}
+
+		expectedIndex := -1
+		for index, expected := range application.files {
+			if !expected.IsExpectedEpisode() ||
+				expected.Parsed.Season != local.Parsed.Season || expected.Parsed.Episode != local.Parsed.Episode {
+				continue
+			}
+			if expectedIndex >= 0 {
+				expectedIndex = -1
+				break
+			}
+			expectedIndex = index
+		}
+		if expectedIndex < 0 {
+			continue
+		}
+
+		paired, err := pairEpisode(local, application.files[expectedIndex], options)
+		if err != nil {
+			application.files[localIndex].Status = media.Error
+			application.files[localIndex].Message = err.Error()
+			continue
+		}
+		application.files[localIndex] = paired
+		application.files = append(application.files[:expectedIndex], application.files[expectedIndex+1:]...)
+		if expectedIndex < localIndex {
+			localIndex--
+		}
+	}
+}
+
+func isUnpairedEpisodeFile(file media.File) bool {
+	return !file.Imported && file.Path != "" && file.Parsed.Kind == media.Episode && !file.Parsed.MultiEpisode
+}
+
+func (application *Application) pairExpected(localIndex, expectedIndex int) error {
+	if localIndex < 0 || localIndex >= len(application.files) ||
+		expectedIndex < 0 || expectedIndex >= len(application.files) || localIndex == expectedIndex {
+		return fmt.Errorf("invalid pairing selection")
+	}
+	local := application.files[localIndex]
+	expected := application.files[expectedIndex]
+	if local.Path == "" || !expected.IsExpectedEpisode() {
+		return fmt.Errorf("choose a local file and an unpaired expected episode")
+	}
+
+	options := application.settings.Load()
+	if local.IsEpisodePairing() {
+		restored, err := unpairedExpected(local, options)
+		if err != nil {
+			return err
+		}
+		application.files = append(application.files, restored)
+	}
+	paired, err := pairEpisode(local, expected, options)
+	if err != nil {
+		return err
+	}
+	application.files[localIndex] = paired
+	application.files = append(application.files[:expectedIndex], application.files[expectedIndex+1:]...)
+	return nil
+}
+
+func (application *Application) unpairExpected(index int) error {
+	if index < 0 || index >= len(application.files) {
+		return fmt.Errorf("invalid pairing selection")
+	}
+	paired := application.files[index]
+	if !paired.IsEpisodePairing() {
+		return fmt.Errorf("selected row is not paired")
+	}
+	expected, err := unpairedExpected(paired, application.settings.Load())
+	if err != nil {
+		return err
+	}
+	application.files[index] = media.File{
+		Path: paired.Path, Parsed: paired.Parsed, Status: media.Unmatched, Message: "not paired",
+	}
+	application.files = append(application.files, expected)
+	return nil
+}
+
+func unpairedExpected(file media.File, options settings.Settings) (media.File, error) {
+	proposed, err := media.Format(options.EpisodePattern, "", file.Candidate)
+	if err != nil {
+		return media.File{}, err
+	}
+	file.Path = ""
+	file.Imported = true
+	file.Parsed = media.Parsed{
+		Kind: media.Episode, Query: file.Candidate.Title, Year: file.Candidate.SeriesYear,
+		Season: file.Candidate.Season, Episode: file.Candidate.Episode,
+	}
+	file.Proposed = proposed
+	file.Status = media.Expected
+	file.Message = "waiting for a local file"
+	return file, nil
+}
+
+func pairEpisode(local, expected media.File, options settings.Settings) (media.File, error) {
+	proposed, err := media.Format(options.EpisodePattern, local.Path, expected.Candidate)
+	if err != nil {
+		return media.File{}, err
+	}
+	expected.Path = local.Path
+	expected.Imported = true
+	expected.Parsed = local.Parsed
+	expected.Proposed = proposed
+	expected.Status = media.Ready
+	expected.Message = ""
+	return expected, nil
+}
+
+func expectedKey(candidate media.Candidate) string {
+	return fmt.Sprintf("%d/%d/%d", candidate.ID, candidate.Season, candidate.Episode)
+}
+
+func dateYear(value string) int {
+	if len(value) < 4 {
+		return 0
+	}
+	year, _ := strconv.Atoi(value[:4])
+	return year
+}
+
+func selectedSeasonNumbers(seasons []tmdb.Season, includeSpecials bool) []int {
+	numbers := make([]int, 0, len(seasons))
+	for _, season := range seasons {
+		if season.SeasonNumber == 0 && !includeSpecials {
+			continue
+		}
+		numbers = append(numbers, season.SeasonNumber)
+	}
+	return numbers
+}
+
+func loadShowEpisodes(
+	ctx context.Context,
+	client *tmdb.Client,
+	showID int,
+	seasons []int,
+	language string,
+) ([]tmdb.Episode, error) {
+	var episodes []tmdb.Episode
+	for _, season := range seasons {
+		loaded, err := client.SeasonEpisodes(ctx, showID, season, language)
+		if err != nil {
+			return nil, fmt.Errorf("load season %d: %w", season, err)
+		}
+		episodes = append(episodes, loaded...)
+	}
+	return episodes, nil
 }
 
 func (application *Application) removeSelected() {
@@ -354,6 +779,9 @@ func (application *Application) reviewSelected() {
 	}
 	index := application.selected
 	file := application.files[index]
+	if file.Path == "" {
+		return
+	}
 	options := application.settings.Load()
 
 	queryEntry := widget.NewEntry()
@@ -460,6 +888,58 @@ func (application *Application) reviewSelected() {
 		}()
 	})
 
+	expectedIndices := make([]int, 0)
+	expectedLabels := make([]string, 0)
+	for expectedIndex, expected := range application.files {
+		if expected.IsExpectedEpisode() {
+			expectedIndices = append(expectedIndices, expectedIndex)
+			expectedLabels = append(expectedLabels, fmt.Sprintf(
+				"%s — S%02dE%02d — %s",
+				expected.Candidate.Title,
+				expected.Candidate.Season,
+				expected.Candidate.Episode,
+				expected.Candidate.EpisodeTitle,
+			))
+		}
+	}
+	expectedSelect := widget.NewSelect(expectedLabels, nil)
+	if len(expectedLabels) > 0 {
+		expectedSelect.SetSelectedIndex(0)
+	}
+	pairButton := widget.NewButton("Pair Expected Episode", func() {
+		selected := expectedSelect.SelectedIndex()
+		if selected < 0 || selected >= len(expectedIndices) {
+			message.SetText("Choose an expected episode first.")
+			return
+		}
+		if err := application.pairExpected(index, expectedIndices[selected]); err != nil {
+			message.SetText(err.Error())
+			return
+		}
+		reviewDialog.Hide()
+		application.selected = -1
+		application.setStatus("Expected episode paired.")
+		application.refresh()
+	})
+	setEnabled(pairButton, len(expectedLabels) > 0)
+	removePairButton := widget.NewButton("Remove Pairing", func() {
+		if err := application.unpairExpected(index); err != nil {
+			message.SetText(err.Error())
+			return
+		}
+		reviewDialog.Hide()
+		application.selected = -1
+		application.setStatus("Pairing removed.")
+		application.refresh()
+	})
+	setEnabled(removePairButton, file.IsEpisodePairing())
+	pairing := container.NewVBox(
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Expected episode pairing", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewForm(widget.NewFormItem("Expected episode", expectedSelect)),
+		container.NewHBox(pairButton, removePairButton),
+	)
+
 	form := widget.NewForm(
 		widget.NewFormItem("Type", kindSelect),
 		widget.NewFormItem("Search", queryEntry),
@@ -468,7 +948,7 @@ func (application *Application) reviewSelected() {
 		widget.NewFormItem("Episode", episodeEntry),
 		widget.NewFormItem("Candidate", candidateSelect),
 	)
-	content := container.NewVBox(form, message, container.NewHBox(searchButton, applyButton))
+	content := container.NewVBox(form, message, container.NewHBox(searchButton, applyButton), pairing)
 	reviewDialog = dialog.NewCustom("Review Match", "Close", content, application.window)
 	reviewDialog.Resize(fyne.NewSize(650, 430))
 	reviewDialog.Show()
@@ -478,11 +958,12 @@ func (application *Application) confirmRename() {
 	if !application.canRename() {
 		return
 	}
+	count := len(application.renameOperations())
 	apply := func() { application.applyRename() }
 	if application.settings.Load().ConfirmRename {
 		dialog.ShowConfirm(
 			"Rename files",
-			fmt.Sprintf("Rename %d file(s)? Existing files will never be overwritten.", len(application.files)),
+			fmt.Sprintf("Rename %d file(s)? Existing files will never be overwritten.", count),
 			func(confirmed bool) {
 				if confirmed {
 					apply()
@@ -496,16 +977,7 @@ func (application *Application) confirmRename() {
 }
 
 func (application *Application) applyRename() {
-	operations := make([]rename.Operation, 0, len(application.files))
-	for _, file := range application.files {
-		if filepath.Base(file.Path) == file.Proposed {
-			continue
-		}
-		operations = append(operations, rename.Operation{
-			From: file.Path,
-			To:   matcher.Destination(file),
-		})
-	}
+	operations := application.renameOperations()
 	application.busy = true
 	application.setStatus("Renaming files…")
 	application.updateButtons()
@@ -517,13 +989,51 @@ func (application *Application) applyRename() {
 				dialog.ShowError(err, application.window)
 				application.setStatus("Rename failed; FileGot attempted to restore original names.")
 			} else {
-				application.files = nil
+				application.files = remainingAfterRename(application.files)
 				application.selected = -1
 				application.setStatus(fmt.Sprintf("Renamed %d file(s). Undo Last is available.", len(operations)))
 			}
 			application.refresh()
 		})
 	}()
+}
+
+func (application *Application) renameOperations() []rename.Operation {
+	operations := make([]rename.Operation, 0, len(application.files))
+	for _, file := range application.files {
+		if file.Path == "" || file.Status != media.Ready || filepath.Base(file.Path) == file.Proposed {
+			continue
+		}
+		operations = append(operations, rename.Operation{From: file.Path, To: matcher.Destination(file)})
+	}
+	return operations
+}
+
+func remainingAfterRename(files []media.File) []media.File {
+	remaining := make([]media.File, 0, len(files))
+	for _, file := range files {
+		if file.IsExpectedEpisode() {
+			remaining = append(remaining, file)
+		}
+	}
+	return remaining
+}
+
+func (application *Application) refreshProposedNames() error {
+	files := append([]media.File(nil), application.files...)
+	options := application.settings.Load()
+	for index, file := range files {
+		if !file.Imported {
+			continue
+		}
+		proposed, err := media.Format(options.EpisodePattern, file.Path, file.Candidate)
+		if err != nil {
+			return err
+		}
+		files[index].Proposed = proposed
+	}
+	application.files = files
+	return nil
 }
 
 func (application *Application) undo() {
@@ -560,6 +1070,9 @@ func (application *Application) canRename() bool {
 	}
 	changes := 0
 	for _, file := range application.files {
+		if file.IsExpectedEpisode() {
+			continue
+		}
 		if file.Status != media.Ready || file.Proposed == "" {
 			return false
 		}
@@ -580,11 +1093,13 @@ func (application *Application) refresh() {
 func (application *Application) updateButtons() {
 	setEnabled(application.addFileButton, !application.busy)
 	setEnabled(application.addFolderButton, !application.busy)
+	setEnabled(application.importShowButton, !application.busy)
 	setEnabled(application.emptyAddFileButton, !application.busy)
 	setEnabled(application.emptyAddFolderButton, !application.busy)
 	setEnabled(application.removeButton, !application.busy && application.selected >= 0)
 	setEnabled(application.clearButton, !application.busy && len(application.files) > 0)
 	canReview := !application.busy && application.selected >= 0 &&
+		application.files[application.selected].Path != "" &&
 		application.files[application.selected].Status != media.Unsupported
 	setEnabled(application.reviewButton, canReview)
 	setEnabled(application.renameButton, application.canRename())
@@ -616,7 +1131,16 @@ func (application *Application) updateDetails() {
 		return
 	}
 	file := application.files[application.selected]
-	details := file.Path + " — " + string(file.Status)
+	details := file.Path
+	if details == "" {
+		details = fmt.Sprintf(
+			"%s S%02dE%02d",
+			file.Candidate.Title,
+			file.Candidate.Season,
+			file.Candidate.Episode,
+		)
+	}
+	details += " — " + string(file.Status)
 	if file.Message != "" {
 		details += " — " + file.Message
 	}
@@ -701,9 +1225,22 @@ func optionalNumber(value int) string {
 	return strconv.Itoa(value)
 }
 
+func optionalDateYear(value string) string {
+	year := dateYear(value)
+	if year == 0 {
+		return "unknown year"
+	}
+	return strconv.Itoa(year)
+}
+
 func statusRowColor(status media.Status, background color.Color) color.Color {
 	dark := isDarkColor(background)
 	switch status {
+	case media.Expected:
+		if dark {
+			return color.NRGBA{R: 0x24, G: 0x34, B: 0x48, A: 0xff}
+		}
+		return color.NRGBA{R: 0xe8, G: 0xf1, B: 0xfc, A: 0xff}
 	case media.Ready:
 		if dark {
 			return color.NRGBA{R: 0x17, G: 0x3c, B: 0x2b, A: 0xff}

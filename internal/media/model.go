@@ -10,6 +10,7 @@ const (
 type Status string
 
 const (
+	Expected    Status = "expected"
 	Unmatched   Status = "unmatched"
 	Review      Status = "review"
 	Ready       Status = "ready"
@@ -41,10 +42,19 @@ type Candidate struct {
 
 type File struct {
 	Path       string
+	Imported   bool
 	Parsed     Parsed
 	Candidate  Candidate
 	Candidates []Candidate
 	Proposed   string
 	Status     Status
 	Message    string
+}
+
+func (file File) IsExpectedEpisode() bool {
+	return file.Imported && file.Path == "" && file.Status == Expected
+}
+
+func (file File) IsEpisodePairing() bool {
+	return file.Imported && file.Path != ""
 }

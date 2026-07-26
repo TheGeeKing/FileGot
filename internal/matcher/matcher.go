@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/thegeeking/FileGot/internal/media"
-	"github.com/thegeeking/FileGot/internal/settings"
-	"github.com/thegeeking/FileGot/internal/tmdb"
+	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/settings"
+	"github.com/TheGeeKing/FileGot/internal/tmdb"
 )
 
 var nonAlphanumeric = regexp.MustCompile(`[^\pL\pN]+`)
@@ -31,7 +31,7 @@ func (matcher *Matcher) Match(ctx context.Context, input []media.File, options s
 
 	tvGroups := make(map[string][]int)
 	for index := range files {
-		if files[index].Status == media.Unsupported {
+		if files[index].Imported || files[index].Status == media.Unsupported {
 			continue
 		}
 		if files[index].Parsed.Kind == media.Episode {
