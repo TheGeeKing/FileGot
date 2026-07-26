@@ -74,8 +74,50 @@ func (matcher *Matcher) Match(ctx context.Context, input []media.File, options s
 			selected, automatic := automaticCandidate(first, candidates)
 			if !automatic {
 				for _, index := range indices {
-					files[index].Candidates = candidates
-					if len(candidates) == 0 {
+					parsed := files[index].Parsed
+					fileCandidates := candidates
+					var fallbackSelected media.Candidate
+					var fallbackAutomatic bool
+					var fallbackErr error
+					seen := map[string]struct{}{
+						normalize(parsed.Query) + "/" + strconv.Itoa(parsed.Year): {},
+					}
+					for _, hint := range media.ParentHints(files[index].Path) {
+						fallback := parsed
+						fallback.Query = hint.Query
+						if hint.Year != 0 {
+							fallback.Year = hint.Year
+						}
+						key := normalize(fallback.Query) + "/" + strconv.Itoa(fallback.Year)
+						if _, duplicate := seen[key]; duplicate {
+							continue
+						}
+						seen[key] = struct{}{}
+						found, err := matcher.Search(ctx, fallback, options)
+						if err != nil {
+							fallbackErr = err
+							continue
+						}
+						fallbackErr = nil
+						if len(found) > 0 {
+							fileCandidates = found
+						}
+						if fallbackSelected, fallbackAutomatic = automaticCandidate(fallback, found); fallbackAutomatic {
+							files[index].Parsed.Query = fallback.Query
+							files[index].Parsed.Year = fallback.Year
+							files[index] = matcher.Resolve(ctx, files[index], fallbackSelected, options)
+							break
+						}
+					}
+					if fallbackAutomatic {
+						continue
+					}
+					if len(fileCandidates) == 0 && fallbackErr != nil {
+						setError(&files[index], fallbackErr)
+						continue
+					}
+					files[index].Candidates = fileCandidates
+					if len(fileCandidates) == 0 {
 						files[index].Status = media.Unmatched
 						files[index].Message = "no TMDB results"
 					} else {
@@ -145,9 +187,20 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 	candidate.Episode = file.Parsed.Episode
 
 	if candidate.Kind == media.Episode {
-		episode, err := matcher.client.Episode(ctx, candidate.ID, candidate.Season, candidate.Episode, options.Language)
+		episodes, err := matcher.client.SeasonEpisodes(ctx, candidate.ID, candidate.Season, options.Language)
 		if err != nil {
 			setError(&file, err)
+			return file
+		}
+		var episode tmdb.Episode
+		for _, current := range episodes {
+			if current.EpisodeNumber == candidate.Episode {
+				episode = current
+				break
+			}
+		}
+		if episode.EpisodeNumber == 0 {
+			setError(&file, fmt.Errorf("TMDB season %d has no episode %d", candidate.Season, candidate.Episode))
 			return file
 		}
 		candidate.EpisodeTitle = chooseTitle(episode.Name, episode.OriginalName, options.PreferOriginalTitle)

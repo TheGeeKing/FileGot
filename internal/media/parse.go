@@ -13,6 +13,7 @@ var (
 	seasonEpisodePattern = regexp.MustCompile(`(?i)^(.*?)[\s._-]*s(\d{1,2})[\s._-]*e(\d{1,3})(?:\b|[\s._-])`)
 	xEpisodePattern      = regexp.MustCompile(`(?i)^(.*?)[\s._-]+(\d{1,2})x(\d{1,3})(?:\b|[\s._-])`)
 	yearPattern          = regexp.MustCompile(`(?:^|[\s._([{-])((?:19|20)\d{2})(?:$|[\s._)\]}-])`)
+	seasonFolderPattern  = regexp.MustCompile(`(?i)^(?:s(?:eason)?|saison)\s*\d+$`)
 	bracketPattern       = regexp.MustCompile(`[\[\{][^\]\}]*[\]\}]`)
 	spacePattern         = regexp.MustCompile(`\s+`)
 )
@@ -30,6 +31,7 @@ func Parse(path string) Parsed {
 
 	if match := multiEpisodePattern.FindStringSubmatch(base); match != nil {
 		query, year := titleAndYear(base[:strings.Index(strings.ToLower(base), strings.ToLower(match[0]))])
+		query, year = parentFallback(path, query, year)
 		return Parsed{
 			Kind:         Episode,
 			Query:        query,
@@ -43,6 +45,7 @@ func Parse(path string) Parsed {
 	for _, pattern := range []*regexp.Regexp{seasonEpisodePattern, xEpisodePattern} {
 		if match := pattern.FindStringSubmatch(base); match != nil {
 			query, year := titleAndYear(match[1])
+			query, year = parentFallback(path, query, year)
 			return Parsed{
 				Kind:    Episode,
 				Query:   query,
@@ -55,6 +58,34 @@ func Parse(path string) Parsed {
 
 	query, year := titleAndYear(base)
 	return Parsed{Kind: Movie, Query: query, Year: year}
+}
+
+func ParentHints(path string) []Parsed {
+	parent := filepath.Dir(filepath.Clean(path))
+	hints := make([]Parsed, 0, 2)
+	for range 2 {
+		if parent == "." || parent == filepath.Dir(parent) {
+			break
+		}
+		name := cleanTitle(filepath.Base(parent))
+		if name != "" && !seasonFolderPattern.MatchString(name) {
+			query, year := titleAndYear(name)
+			hints = append(hints, Parsed{Kind: Episode, Query: query, Year: year})
+		}
+		parent = filepath.Dir(parent)
+	}
+	return hints
+}
+
+func parentFallback(path, query string, year int) (string, int) {
+	if query != "" {
+		return query, year
+	}
+	hints := ParentHints(path)
+	if len(hints) == 0 {
+		return query, year
+	}
+	return hints[0].Query, hints[0].Year
 }
 
 func titleAndYear(value string) (string, int) {

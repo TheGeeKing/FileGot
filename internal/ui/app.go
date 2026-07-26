@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -28,6 +29,10 @@ type Application struct {
 	window   fyne.Window
 	settings *settings.Store
 	renamer  *rename.Manager
+
+	clientMu    sync.Mutex
+	clientToken string
+	client      *tmdb.Client
 
 	files    []media.File
 	table    *widget.Table
@@ -83,6 +88,16 @@ func (application *Application) Run() {
 		)
 	}
 	application.app.Run()
+}
+
+func (application *Application) tmdbClient(token string) *tmdb.Client {
+	application.clientMu.Lock()
+	defer application.clientMu.Unlock()
+	if application.client == nil || application.clientToken != token {
+		application.clientToken = token
+		application.client = tmdb.New(token)
+	}
+	return application.client
 }
 
 func (application *Application) build() {
@@ -267,7 +282,7 @@ func (application *Application) importShow() {
 		dialog.ShowError(err, application.window)
 		return
 	}
-	client := tmdb.New(options.TMDBToken)
+	client := application.tmdbClient(options.TMDBToken)
 	queryEntry := widget.NewEntry()
 	queryEntry.SetPlaceHolder("TV show title")
 	showSelect := widget.NewSelect(nil, nil)
@@ -757,7 +772,7 @@ func (application *Application) startMatch() {
 
 	input := append([]media.File(nil), application.files...)
 	go func() {
-		engine := matcher.New(tmdb.New(options.TMDBToken))
+		engine := matcher.New(application.tmdbClient(options.TMDBToken))
 		results := engine.Match(ctx, input, options)
 		fyne.Do(func() {
 			application.cancel = nil
@@ -838,7 +853,7 @@ func (application *Application) reviewSelected() {
 		}
 		message.SetText("Searching…")
 		go func() {
-			engine := matcher.New(tmdb.New(options.TMDBToken))
+			engine := matcher.New(application.tmdbClient(options.TMDBToken))
 			results, err := engine.Search(context.Background(), parsed, options)
 			fyne.Do(func() {
 				if err != nil {
@@ -871,7 +886,7 @@ func (application *Application) reviewSelected() {
 		file.Parsed = parsed
 		message.SetText("Loading metadata…")
 		go func() {
-			engine := matcher.New(tmdb.New(options.TMDBToken))
+			engine := matcher.New(application.tmdbClient(options.TMDBToken))
 			resolved := engine.Resolve(context.Background(), file, selectedCandidate, options)
 			fyne.Do(func() {
 				if resolved.Status == media.Error {

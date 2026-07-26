@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,6 +20,9 @@ type Client struct {
 	token      string
 	baseURL    string
 	httpClient *http.Client
+	cacheMu    sync.RWMutex
+	cache      map[string][]byte
+	requests   sync.Map
 }
 
 type Movie struct {
@@ -71,6 +75,7 @@ func NewWithHTTPClient(token, baseURL string, httpClient *http.Client) *Client {
 		token:      strings.TrimSpace(token),
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		httpClient: httpClient,
+		cache:      make(map[string][]byte),
 	}
 }
 
@@ -108,13 +113,6 @@ func (client *Client) SearchTV(ctx context.Context, query string, year int, lang
 		return nil, err
 	}
 	return response.Results, nil
-}
-
-func (client *Client) Episode(ctx context.Context, seriesID, season, episode int, language string) (Episode, error) {
-	var response Episode
-	path := fmt.Sprintf("/tv/%d/season/%d/episode/%d", seriesID, season, episode)
-	err := client.get(ctx, path, url.Values{"language": {language}}, &response)
-	return response, err
 }
 
 func (client *Client) ShowSeasons(ctx context.Context, seriesID int, language string) ([]Season, error) {
@@ -155,6 +153,21 @@ func (client *Client) get(ctx context.Context, path string, values url.Values, t
 	if len(values) > 0 {
 		endpoint += "?" + values.Encode()
 	}
+	if found, err := client.cached(endpoint, target); found {
+		return err
+	}
+
+	value, _ := client.requests.LoadOrStore(endpoint, make(chan struct{}, 1))
+	request := value.(chan struct{})
+	select {
+	case request <- struct{}{}:
+		defer func() { <-request }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if found, err := client.cached(endpoint, target); found {
+		return err
+	}
 
 	var lastErr error
 	for attempt := range 3 {
@@ -193,6 +206,9 @@ func (client *Client) get(ctx context.Context, path string, values url.Values, t
 			if err := json.Unmarshal(body, target); err != nil {
 				return fmt.Errorf("decode TMDB response: %w", err)
 			}
+			client.cacheMu.Lock()
+			client.cache[endpoint] = body
+			client.cacheMu.Unlock()
 			return nil
 		}
 
@@ -218,6 +234,19 @@ func (client *Client) get(ctx context.Context, path string, values url.Values, t
 		return apiErr
 	}
 	return lastErr
+}
+
+func (client *Client) cached(endpoint string, target any) (bool, error) {
+	client.cacheMu.RLock()
+	body, found := client.cache[endpoint]
+	client.cacheMu.RUnlock()
+	if !found {
+		return false, nil
+	}
+	if err := json.Unmarshal(body, target); err != nil {
+		return true, fmt.Errorf("decode cached TMDB response: %w", err)
+	}
+	return true, nil
 }
 
 func retryDelay(attempt int) time.Duration {
