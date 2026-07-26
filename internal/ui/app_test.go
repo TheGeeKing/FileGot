@@ -385,6 +385,41 @@ func TestRenameIgnoresAndRetainsUnpairedExpectedEpisodes(t *testing.T) {
 	}
 }
 
+func TestUnchangedFileIsNeutralAndSkipped(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	application := New(
+		app,
+		settings.NewStore(app.Preferences()),
+		rename.NewManager(filepath.Join(t.TempDir(), "rename.json")),
+	)
+	application.files = []media.File{
+		{Path: filepath.Join("media", "old.mkv"), Status: media.Ready, Proposed: "new.mkv"},
+		{Path: filepath.Join("media", "same.mkv"), Status: media.Ready, Proposed: "same.mkv"},
+	}
+
+	cell := application.table.CreateCell()
+	application.table.UpdateCell(widget.TableCellID{Row: 2, Col: 0}, cell)
+	background, _ := fileCellParts(cell)
+	neutral := statusRowColor(
+		media.Unsupported,
+		theme.ColorForWidget(theme.ColorNameBackground, application.table),
+	)
+	if rgba(background.FillColor) != rgba(neutral) {
+		t.Fatal("unchanged file should use the neutral row color")
+	}
+	if operations := application.renameOperations(); len(operations) != 1 || operations[0].From != application.files[0].Path {
+		t.Fatalf("rename operations = %#v, want only the changed file", operations)
+	}
+	if got := matchSummary(application.files); got != "Matching complete: 1 ready, 0 need review, 0 unmatched, 0 errors." {
+		t.Fatalf("match summary = %q", got)
+	}
+	application.files = application.files[1:]
+	if application.canRename() {
+		t.Fatal("unchanged file should not enable Rename")
+	}
+}
+
 func TestNamingPatternRefreshesExpectedAndPairedRows(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)

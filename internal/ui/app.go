@@ -124,6 +124,11 @@ func (application *Application) build() {
 			file := application.files[id.Row-1]
 			if id.Row-1 == application.selected {
 				background.FillColor = theme.ColorForWidget(theme.ColorNameSelection, application.table)
+			} else if unchanged(file) {
+				background.FillColor = statusRowColor(
+					media.Unsupported,
+					theme.ColorForWidget(theme.ColorNameBackground, application.table),
+				)
 			} else {
 				background.FillColor = statusRowColor(
 					file.Status,
@@ -1016,7 +1021,7 @@ func (application *Application) applyRename() {
 func (application *Application) renameOperations() []rename.Operation {
 	operations := make([]rename.Operation, 0, len(application.files))
 	for _, file := range application.files {
-		if file.Path == "" || file.Status != media.Ready || filepath.Base(file.Path) == file.Proposed {
+		if file.Path == "" || file.Status != media.Ready || unchanged(file) {
 			continue
 		}
 		operations = append(operations, rename.Operation{From: file.Path, To: matcher.Destination(file)})
@@ -1088,12 +1093,13 @@ func (application *Application) canRename() bool {
 		if file.IsExpectedEpisode() {
 			continue
 		}
+		if unchanged(file) {
+			continue
+		}
 		if file.Status != media.Ready || file.Proposed == "" {
 			return false
 		}
-		if filepath.Base(file.Path) != file.Proposed {
-			changes++
-		}
+		changes++
 	}
 	return changes > 0
 }
@@ -1187,12 +1193,19 @@ func pathKey(path string) string {
 func matchSummary(files []media.File) string {
 	counts := make(map[media.Status]int)
 	for _, file := range files {
+		if unchanged(file) {
+			continue
+		}
 		counts[file.Status]++
 	}
 	return fmt.Sprintf(
 		"Matching complete: %d ready, %d need review, %d unmatched, %d errors.",
 		counts[media.Ready], counts[media.Review], counts[media.Unmatched], counts[media.Error]+counts[media.Unsupported],
 	)
+}
+
+func unchanged(file media.File) bool {
+	return file.Status == media.Ready && filepath.Base(file.Path) == file.Proposed
 }
 
 func reviewParsed(kind, query, year, season, episode string) (media.Parsed, error) {

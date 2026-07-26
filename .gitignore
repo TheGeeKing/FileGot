@@ -2,3 +2,4 @@
 /FileGot.exe~
 *.test
 *.out
+.worktrees/
