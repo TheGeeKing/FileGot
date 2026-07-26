@@ -605,6 +605,91 @@ func TestNamingReferenceTablesCoverCompatibleSyntax(t *testing.T) {
 	}
 }
 
+func TestAdvancedTemplateEntryAcceptsAndDismissesCompletions(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	window := app.NewWindow("Advanced template")
+	entry := newAdvancedTemplateEntry(media.Movie, func() bool { return true })
+	window.SetContent(entry)
+	window.Show()
+	t.Cleanup(window.Close)
+
+	test.Type(entry, "{n.")
+	if entry.Text != "{n." || len(entry.completions) != len(media.AdvancedTemplateMethods()) {
+		t.Fatalf("typing changed text or missed completions: text=%q completions=%d", entry.Text, len(entry.completions))
+	}
+	if entry.popup == nil || !entry.popup.Visible() ||
+		!strings.Contains(entry.completionButtons[0].Text, "String") ||
+		!strings.Contains(entry.completionButtons[0].Text, "{n.acronym()}") {
+		t.Fatal("completion popup should show return type and compact example")
+	}
+
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyDown})
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEnter})
+	if entry.Text != "{n.after()" || entry.CursorTextOffset() != len([]rune("{n.after(")) {
+		t.Fatalf("accepted completion = %q at %d", entry.Text, entry.CursorTextOffset())
+	}
+	if entry.signature == nil || entry.signature.Name != "after" || entry.signature.ActiveParameter != 0 {
+		t.Fatalf("signature after completion = %#v", entry.signature)
+	}
+
+	entry.SetText("{n.")
+	entry.CursorColumn = len([]rune(entry.Text))
+	entry.refreshAssist()
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEscape})
+	if entry.Text != "{n." || entry.popup != nil || len(entry.completions) != 0 {
+		t.Fatalf("escape changed text or kept popup: text=%q completions=%d", entry.Text, len(entry.completions))
+	}
+
+	entry.SetText("prefix {pr} suffix")
+	entry.CursorColumn = 10
+	entry.refreshAssist()
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEnter})
+	if entry.Text != "prefix {primaryTitle} suffix" {
+		t.Fatalf("completion replaced unrelated text: %q", entry.Text)
+	}
+}
+
+func TestAdvancedTemplateEntryFiltersAndTracksSignatureParameters(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	window := app.NewWindow("Advanced template")
+	entry := newAdvancedTemplateEntry(media.Movie, func() bool { return true })
+	window.SetContent(entry)
+	window.Show()
+	t.Cleanup(window.Close)
+
+	test.Type(entry, "{n.repl")
+	names := make([]string, len(entry.completions))
+	for index, completion := range entry.completions {
+		names[index] = completion.Name
+	}
+	if !slices.Equal(names, []string{"replace", "replaceAll"}) {
+		t.Fatalf("filtered completions = %v", names)
+	}
+
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyTab})
+	if entry.Text != "{n.replace()" || entry.CursorTextOffset() != len([]rune("{n.replace(")) {
+		t.Fatalf("tab completion = %q at %d", entry.Text, entry.CursorTextOffset())
+	}
+	test.Type(entry, "'old', ")
+	if entry.signature == nil || entry.signature.Name != "replace" || entry.signature.ActiveParameter != 1 {
+		t.Fatalf("second parameter signature = %#v", entry.signature)
+	}
+	if len(entry.completions) != 0 {
+		t.Fatalf("literal should not offer completions: %#v", entry.completions)
+	}
+	if entry.popup == nil || !strings.Contains(entry.signatureLabel.Text, "new") ||
+		!strings.Contains(entry.signatureLabel.Text, "required") {
+		t.Fatal("signature popup should highlight the required new parameter")
+	}
+	beforeEscape := entry.Text
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEscape})
+	if entry.Text != beforeEscape || entry.popup != nil || entry.signature != nil {
+		t.Fatal("escape should dismiss signature help without changing text")
+	}
+}
+
 func hasNamingSyntax(rows []namingSyntaxRow, syntax string) bool {
 	return slices.ContainsFunc(rows, func(row namingSyntaxRow) bool {
 		return row.Syntax == syntax && row.Description != "" && row.Example != "" && row.Type != ""

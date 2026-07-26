@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -245,6 +246,169 @@ func TestValidateAdvancedTemplate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAdvancedTemplateCatalog(t *testing.T) {
+	movie := AdvancedTemplateCatalog(Movie)
+	episode := AdvancedTemplateCatalog(Episode)
+
+	if !hasAdvancedSyntax(movie, "n") || hasAdvancedSyntax(movie, "t") {
+		t.Fatalf("movie bindings = %#v", movie)
+	}
+	if !hasAdvancedSyntax(episode, "n") || !hasAdvancedSyntax(episode, "t") {
+		t.Fatalf("episode bindings = %#v", episode)
+	}
+
+	replace, ok := advancedSyntax(movie, "replace")
+	if !ok || replace.Description == "" || replace.ReturnType != "String" ||
+		replace.Syntax == "" || replace.Example == "" || len(replace.Parameters) != 2 {
+		t.Fatalf("replace syntax = %#v", replace)
+	}
+	if replace.Parameters[0].Name != "old" || replace.Parameters[0].Type != "String" ||
+		!replace.Parameters[0].Required || replace.Parameters[1].Name != "new" ||
+		replace.Parameters[1].Type != "String" || !replace.Parameters[1].Required {
+		t.Fatalf("replace parameters = %#v", replace.Parameters)
+	}
+
+	for _, method := range AdvancedTemplateMethods() {
+		if !hasAdvancedSyntax(movie, method) || !hasAdvancedSyntax(episode, method) {
+			t.Errorf("catalog is missing method %q", method)
+		}
+	}
+}
+
+func TestAdvancedTemplateCompletions(t *testing.T) {
+	tests := []struct {
+		name        string
+		kind        Kind
+		pattern     string
+		cursor      int
+		want        []string
+		replacement [2]int
+	}{
+		{
+			name: "movie bindings", kind: Movie, pattern: "{", cursor: 1,
+			want: []string{"n", "ny", "primaryTitle", "tmdbid", "y"}, replacement: [2]int{1, 1},
+		},
+		{
+			name: "episode-only binding", kind: Episode, pattern: "{t", cursor: 2,
+			want: []string{"t", "tmdbid"}, replacement: [2]int{1, 2},
+		},
+		{
+			name: "binding prefix", kind: Movie, pattern: "prefix {pr} suffix", cursor: 10,
+			want: []string{"primaryTitle"}, replacement: [2]int{8, 10},
+		},
+		{
+			name: "direct methods", kind: Movie, pattern: "{n.", cursor: 3,
+			want: AdvancedTemplateMethods(), replacement: [2]int{3, 3},
+		},
+		{
+			name: "chained method prefix", kind: Movie, pattern: `{n.space('.').re`, cursor: 16,
+			want: []string{"removeAll", "replace", "replaceAll"}, replacement: [2]int{14, 16},
+		},
+		{
+			name: "string literal", kind: Movie, pattern: `{n.replace('re`, cursor: 14,
+		},
+		{
+			name: "regular expression literal", kind: Movie, pattern: `{n.removeAll(/re`, cursor: 16,
+		},
+		{
+			name: "outside expression", kind: Movie, pattern: "movie", cursor: 5,
+		},
+		{
+			name: "invalid chain", kind: Movie, pattern: "{n.unknown().", cursor: 13,
+		},
+		{
+			name: "incompatible binding", kind: Movie, pattern: "{t.", cursor: 3,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := AdvancedTemplateCompletions(test.kind, test.pattern, test.cursor)
+			names := make([]string, len(got))
+			for index, completion := range got {
+				names[index] = completion.Name
+				if completion.Description == "" || completion.ReturnType == "" || completion.Example == "" {
+					t.Errorf("completion metadata = %#v", completion)
+				}
+				if completion.ReplaceStart != test.replacement[0] ||
+					completion.ReplaceEnd != test.replacement[1] {
+					t.Errorf("replacement = %d:%d, want %d:%d",
+						completion.ReplaceStart, completion.ReplaceEnd,
+						test.replacement[0], test.replacement[1])
+				}
+			}
+			if !slices.Equal(names, test.want) {
+				t.Fatalf("completions = %v, want %v", names, test.want)
+			}
+		})
+	}
+}
+
+func TestAdvancedTemplateSignatureHelp(t *testing.T) {
+	tests := []struct {
+		name      string
+		pattern   string
+		cursor    int
+		method    string
+		parameter int
+	}{
+		{
+			name: "first replace parameter", pattern: `{n.replace(`, cursor: 11,
+			method: "replace", parameter: 0,
+		},
+		{
+			name: "second replace parameter", pattern: `{n.replace('old', `, cursor: 18,
+			method: "replace", parameter: 1,
+		},
+		{
+			name: "optional pad parameter", pattern: `{n.pad(20, `, cursor: 11,
+			method: "pad", parameter: 1,
+		},
+		{
+			name: "chained call", pattern: `{n.trim().replace(`, cursor: 18,
+			method: "replace", parameter: 0,
+		},
+		{
+			name: "cursor inside string", pattern: `{n.replace('old', 'new')}`, cursor: 22,
+			method: "replace", parameter: 1,
+		},
+		{name: "closed call", pattern: `{n.replace('old', 'new')}`, cursor: 25},
+		{name: "grouping parentheses", pattern: `{(n != "")`, cursor: 10},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := AdvancedTemplateSignatureHelp(test.pattern, test.cursor)
+			if test.method == "" {
+				if got != nil {
+					t.Fatalf("signature = %#v, want nil", got)
+				}
+				return
+			}
+			if got == nil || got.Name != test.method || got.ActiveParameter != test.parameter {
+				t.Fatalf("signature = %#v, want %s parameter %d", got, test.method, test.parameter)
+			}
+			if got.Parameters[got.ActiveParameter].Description == "" {
+				t.Fatalf("active parameter has no description: %#v", got)
+			}
+		})
+	}
+}
+
+func hasAdvancedSyntax(items []AdvancedTemplateSyntax, name string) bool {
+	_, ok := advancedSyntax(items, name)
+	return ok
+}
+
+func advancedSyntax(items []AdvancedTemplateSyntax, name string) (AdvancedTemplateSyntax, bool) {
+	for _, item := range items {
+		if item.Name == name {
+			return item, true
+		}
+	}
+	return AdvancedTemplateSyntax{}, false
 }
 
 func TestValidatePattern(t *testing.T) {
