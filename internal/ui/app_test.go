@@ -209,6 +209,134 @@ func TestTableColumnsSort(t *testing.T) {
 	}
 }
 
+func TestFileSelectionTransitions(t *testing.T) {
+	application := &Application{selected: -1, selectionAnchor: -1}
+
+	application.selectRow(1, 0)
+	application.selectRow(3, fyne.KeyModifierControl)
+	if got := application.selectedIndices(); !slices.Equal(got, []int{1, 3}) {
+		t.Fatalf("Ctrl-click selection = %v, want [1 3]", got)
+	}
+
+	application.selectRow(1, fyne.KeyModifierControl)
+	if got := application.selectedIndices(); !slices.Equal(got, []int{3}) {
+		t.Fatalf("Ctrl-click deselection = %v, want [3]", got)
+	}
+
+	application.selectRow(0, 0)
+	application.selectRow(3, fyne.KeyModifierShift)
+	if got := application.selectedIndices(); !slices.Equal(got, []int{0, 1, 2, 3}) {
+		t.Fatalf("Shift-click selection = %v, want [0 1 2 3]", got)
+	}
+
+	application.selectRow(2, 0)
+	if got := application.selectedIndices(); !slices.Equal(got, []int{2}) {
+		t.Fatalf("plain-click selection = %v, want [2]", got)
+	}
+	application.selectRow(0, fyne.KeyModifierControl)
+	application.selectRow(3, fyne.KeyModifierShift)
+	if got := application.selectedIndices(); !slices.Equal(got, []int{0, 1, 2, 3}) {
+		t.Fatalf("Shift-click after anchor change = %v, want [0 1 2 3]", got)
+	}
+}
+
+func TestContextActionsFollowSelection(t *testing.T) {
+	application := &Application{
+		files: []media.File{
+			{Path: filepath.Join("media", "old.mkv"), Status: media.Ready, Proposed: "new.mkv"},
+			{Path: filepath.Join("media", "review.mkv"), Status: media.Review},
+		},
+		selected:        0,
+		selectionAnchor: 0,
+		selectedRows:    map[int]bool{0: true},
+	}
+
+	renameItem, reviewItem, removeItem := application.contextActions()
+	if renameItem.Disabled || reviewItem.Disabled || removeItem.Disabled {
+		t.Fatal("single ready row should expose Rename, Review, and Remove")
+	}
+
+	application.selectRow(1, fyne.KeyModifierControl)
+	renameItem, reviewItem, removeItem = application.contextActions()
+	if renameItem.Disabled {
+		t.Fatal("selection containing a ready row should expose Rename")
+	}
+	if !reviewItem.Disabled {
+		t.Fatal("Review should be unavailable for multiple rows")
+	}
+	if removeItem.Disabled {
+		t.Fatal("Remove should be available for multiple rows")
+	}
+	if operations := application.renameOperations(); len(operations) != 1 ||
+		operations[0].From != application.files[0].Path {
+		t.Fatalf("batch rename operations = %#v, want only selected ready rows", operations)
+	}
+	if remaining := remainingAfterRename(application.files, application.renameOperations()); len(remaining) != 1 ||
+		remaining[0].Path != application.files[1].Path {
+		t.Fatalf("remaining rows = %#v, want the unrenamed selection retained", remaining)
+	}
+}
+
+func TestRemoveSelectedRows(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	application := New(
+		app,
+		settings.NewStore(app.Preferences()),
+		rename.NewManager(filepath.Join(t.TempDir(), "rename.json")),
+	)
+	application.files = []media.File{
+		{Path: "first.mkv"},
+		{Path: "second.mkv"},
+		{Path: "third.mkv"},
+	}
+	application.selected = 0
+	application.selectionAnchor = 0
+	application.selectedRows = map[int]bool{0: true, 2: true}
+
+	application.removeSelected()
+	if len(application.files) != 1 || application.files[0].Path != "second.mkv" {
+		t.Fatalf("remaining files = %#v, want only second.mkv", application.files)
+	}
+	if len(application.selectedRows) != 0 || application.selected != -1 {
+		t.Fatal("Remove should clear the selection")
+	}
+}
+
+func TestRightClickSelectsRowAndPreservesSelectedRows(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	application := New(
+		app,
+		settings.NewStore(app.Preferences()),
+		rename.NewManager(filepath.Join(t.TempDir(), "rename.json")),
+	)
+	application.files = []media.File{
+		{Path: "first.mkv", Status: media.Ready, Proposed: "new-first.mkv"},
+		{Path: "second.mkv", Status: media.Ready, Proposed: "new-second.mkv"},
+	}
+	application.table.Resize(fyne.NewSize(500, 300))
+	application.table.CreateRenderer().Layout(application.table.Size())
+
+	rowHeight := application.table.CreateCell().MinSize().Height + theme.Padding()
+	application.table.TappedSecondary(&fyne.PointEvent{
+		Position:         fyne.NewPos(10, rowHeight+1),
+		AbsolutePosition: fyne.NewPos(10, rowHeight+1),
+	})
+	if got := application.selectedIndices(); !slices.Equal(got, []int{0}) {
+		t.Fatalf("right-click selection = %v, want [0]", got)
+	}
+
+	application.selectRow(1, fyne.KeyModifierControl)
+	application.table.TappedSecondary(&fyne.PointEvent{
+		Position:         fyne.NewPos(10, rowHeight+1),
+		AbsolutePosition: fyne.NewPos(10, rowHeight+1),
+	})
+	if got := application.selectedIndices(); !slices.Equal(got, []int{0, 1}) {
+		t.Fatalf("right-click selected row changed selection to %v", got)
+	}
+}
+
 func TestReviewParsed(t *testing.T) {
 	parsed, err := reviewParsed("TV episode", "The Last of Us", "2023", "1", "3")
 	if err != nil {
@@ -457,7 +585,7 @@ func TestRenameIgnoresAndRetainsUnpairedExpectedEpisodes(t *testing.T) {
 	if len(operations) != 1 || operations[0].From == "" {
 		t.Fatalf("rename operations = %#v", operations)
 	}
-	remaining := remainingAfterRename(application.files)
+	remaining := remainingAfterRename(application.files, operations)
 	if len(remaining) != 1 || remaining[0].Path != "" || remaining[0].Status != media.Expected {
 		t.Fatalf("remaining rows = %#v", remaining)
 	}

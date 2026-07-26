@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -36,16 +37,18 @@ type Application struct {
 	clientToken string
 	client      *tmdb.Client
 
-	files         []media.File
-	table         *widget.Table
-	empty         fyne.CanvasObject
-	status        *widget.Label
-	details       *widget.Label
-	selected      int
-	sortColumn    int
-	sortAscending bool
-	cancel        context.CancelFunc
-	busy          bool
+	files           []media.File
+	table           *fileTable
+	empty           fyne.CanvasObject
+	status          *widget.Label
+	details         *widget.Label
+	selected        int
+	selectedRows    map[int]bool
+	selectionAnchor int
+	sortColumn      int
+	sortAscending   bool
+	cancel          context.CancelFunc
+	busy            bool
 
 	importShowButton *widget.Button
 	removeButton     *widget.Button
@@ -59,7 +62,7 @@ type Application struct {
 func New(app fyne.App, store *settings.Store, renamer *rename.Manager) *Application {
 	application := &Application{
 		app: app, window: app.NewWindow("FileGot"), settings: store, renamer: renamer,
-		selected: -1, sortColumn: -1,
+		selected: -1, selectedRows: make(map[int]bool), selectionAnchor: -1, sortColumn: -1,
 	}
 	application.build()
 	return application
@@ -102,7 +105,7 @@ func (application *Application) tmdbClient(token string) *tmdb.Client {
 }
 
 func (application *Application) build() {
-	application.table = widget.NewTable(
+	application.table = newFileTable(
 		func() (int, int) { return len(application.files) + 1, 3 },
 		func() fyne.CanvasObject {
 			background := canvas.NewRectangle(color.Transparent)
@@ -131,7 +134,7 @@ func (application *Application) build() {
 				return
 			}
 			file := application.files[id.Row-1]
-			if id.Row-1 == application.selected {
+			if application.selectedRows[id.Row-1] {
 				background.FillColor = theme.ColorForWidget(theme.ColorNameSelection, application.table)
 			} else {
 				background.FillColor = statusRowColor(
@@ -152,17 +155,16 @@ func (application *Application) build() {
 			application.table.Unselect(id)
 			return
 		}
-		application.selected = id.Row - 1
+		if application.table.contextClick && application.selectedRows[id.Row-1] {
+			application.selected = id.Row - 1
+		} else {
+			application.selectRow(id.Row-1, application.table.modifiers)
+		}
 		application.table.Refresh()
 		application.updateDetails()
 		application.updateButtons()
 	}
-	application.table.OnUnselected = func(widget.TableCellID) {
-		application.selected = -1
-		application.table.Refresh()
-		application.updateDetails()
-		application.updateButtons()
-	}
+	application.table.menu = application.contextActions
 
 	application.importShowButton = widget.NewButtonWithIcon("Import Show", theme.ContentAddIcon(), application.importShow)
 	application.removeButton = widget.NewButtonWithIcon("Remove", theme.ContentRemoveIcon(), application.removeSelected)
@@ -244,6 +246,7 @@ func (application *Application) build() {
 }
 
 func (application *Application) sortFiles(column int) {
+	application.clearSelection()
 	application.sortAscending = column != application.sortColumn || !application.sortAscending
 	application.sortColumn = column
 	sort.SliceStable(application.files, func(left, right int) bool {
@@ -261,6 +264,51 @@ func (application *Application) sortFiles(column int) {
 		return a > b
 	})
 	application.table.Refresh()
+}
+
+func (application *Application) selectRow(row int, modifiers fyne.KeyModifier) {
+	if modifiers&fyne.KeyModifierShift != 0 && application.selectionAnchor >= 0 {
+		application.selectedRows = make(map[int]bool)
+		first, last := min(application.selectionAnchor, row), max(application.selectionAnchor, row)
+		for index := first; index <= last; index++ {
+			application.selectedRows[index] = true
+		}
+		application.selected = row
+		return
+	}
+	if modifiers&fyne.KeyModifierShortcutDefault != 0 {
+		if application.selectedRows[row] {
+			delete(application.selectedRows, row)
+			application.selected = -1
+			for index := range application.selectedRows {
+				application.selected = index
+				break
+			}
+		} else {
+			application.selectedRows[row] = true
+			application.selected = row
+		}
+		application.selectionAnchor = row
+		return
+	}
+	application.selectedRows = map[int]bool{row: true}
+	application.selected = row
+	application.selectionAnchor = row
+}
+
+func (application *Application) selectedIndices() []int {
+	indices := make([]int, 0, len(application.selectedRows))
+	for index := range application.selectedRows {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	return indices
+}
+
+func (application *Application) clearSelection() {
+	application.selected = -1
+	application.selectedRows = make(map[int]bool)
+	application.selectionAnchor = -1
 }
 
 func fileColumnText(file media.File, column int) string {
@@ -757,11 +805,20 @@ func loadShowEpisodes(
 }
 
 func (application *Application) removeSelected() {
-	if application.selected < 0 || application.selected >= len(application.files) {
+	if application.selected < 0 || application.selected >= len(application.files) || application.busy {
 		return
 	}
-	application.files = append(application.files[:application.selected], application.files[application.selected+1:]...)
-	application.selected = -1
+	if len(application.selectedRows) == 0 {
+		application.selectedRows = map[int]bool{application.selected: true}
+	}
+	remaining := make([]media.File, 0, len(application.files)-len(application.selectedRows))
+	for index, file := range application.files {
+		if !application.selectedRows[index] {
+			remaining = append(remaining, file)
+		}
+	}
+	application.files = remaining
+	application.clearSelection()
 	application.refresh()
 }
 
@@ -770,7 +827,7 @@ func (application *Application) clear() {
 		application.cancel()
 	}
 	application.files = nil
-	application.selected = -1
+	application.clearSelection()
 	application.setStatus("List cleared.")
 	application.refresh()
 }
@@ -820,7 +877,7 @@ func (application *Application) startMatch() {
 }
 
 func (application *Application) reviewSelected() {
-	if application.selected < 0 || application.selected >= len(application.files) || application.busy {
+	if !application.canReview() {
 		return
 	}
 	index := application.selected
@@ -966,7 +1023,7 @@ func (application *Application) reviewExpectedPairing(index int) {
 			return
 		}
 		pairingDialog.Hide()
-		application.selected = -1
+		application.clearSelection()
 		application.setStatus("Expected episode paired.")
 		application.refresh()
 	})
@@ -977,7 +1034,7 @@ func (application *Application) reviewExpectedPairing(index int) {
 			return
 		}
 		pairingDialog.Hide()
-		application.selected = -1
+		application.clearSelection()
 		application.setStatus("Pairing removed.")
 		application.refresh()
 	})
@@ -1027,8 +1084,8 @@ func (application *Application) applyRename() {
 				dialog.ShowError(err, application.window)
 				application.setStatus("Rename failed; FileGot attempted to restore original names.")
 			} else {
-				application.files = remainingAfterRename(application.files)
-				application.selected = -1
+				application.files = remainingAfterRename(application.files, operations)
+				application.clearSelection()
 				application.setStatus(fmt.Sprintf("Renamed %d file(s). Undo Last is available.", len(operations)))
 			}
 			application.refresh()
@@ -1038,7 +1095,10 @@ func (application *Application) applyRename() {
 
 func (application *Application) renameOperations() []rename.Operation {
 	operations := make([]rename.Operation, 0, len(application.files))
-	for _, file := range application.files {
+	for index, file := range application.files {
+		if len(application.selectedRows) > 0 && !application.selectedRows[index] {
+			continue
+		}
 		if file.Path == "" || file.Status != media.Ready || unchanged(file) {
 			continue
 		}
@@ -1047,10 +1107,14 @@ func (application *Application) renameOperations() []rename.Operation {
 	return operations
 }
 
-func remainingAfterRename(files []media.File) []media.File {
+func remainingAfterRename(files []media.File, operations []rename.Operation) []media.File {
+	renamed := make(map[string]bool, len(operations))
+	for _, operation := range operations {
+		renamed[operation.From] = true
+	}
 	remaining := make([]media.File, 0, len(files))
 	for _, file := range files {
-		if file.IsExpectedEpisode() {
+		if !renamed[file.Path] {
 			remaining = append(remaining, file)
 		}
 	}
@@ -1093,7 +1157,7 @@ func (application *Application) undo() {
 					application.setStatus("Undo failed.")
 				} else {
 					application.files = nil
-					application.selected = -1
+					application.clearSelection()
 					application.setStatus("Last rename restored.")
 				}
 				application.refresh()
@@ -1103,23 +1167,7 @@ func (application *Application) undo() {
 }
 
 func (application *Application) canRename() bool {
-	if len(application.files) == 0 || application.busy {
-		return false
-	}
-	changes := 0
-	for _, file := range application.files {
-		if file.IsExpectedEpisode() {
-			continue
-		}
-		if unchanged(file) {
-			continue
-		}
-		if file.Status != media.Ready || file.Proposed == "" {
-			return false
-		}
-		changes++
-	}
-	return changes > 0
+	return !application.busy && len(application.renameOperations()) > 0
 }
 
 func (application *Application) refresh() {
@@ -1131,12 +1179,9 @@ func (application *Application) refresh() {
 
 func (application *Application) updateButtons() {
 	setEnabled(application.importShowButton, !application.busy)
-	setEnabled(application.removeButton, !application.busy && application.selected >= 0)
+	setEnabled(application.removeButton, application.canRemove())
 	setEnabled(application.clearButton, !application.busy && len(application.files) > 0)
-	canReview := !application.busy && application.selected >= 0 &&
-		application.files[application.selected].Path != "" &&
-		application.files[application.selected].Status != media.Unsupported
-	setEnabled(application.reviewButton, canReview)
+	setEnabled(application.reviewButton, application.canReview())
 	setEnabled(application.renameButton, application.canRename())
 	setEnabled(application.undoButton, !application.busy && application.renamer.HasUndo())
 
@@ -1147,6 +1192,27 @@ func (application *Application) updateButtons() {
 		application.matchButton.SetText("Match")
 		setEnabled(application.matchButton, !application.busy && len(application.files) > 0)
 	}
+}
+
+func (application *Application) canReview() bool {
+	return !application.busy && len(application.selectedRows) == 1 &&
+		application.selected >= 0 && application.selected < len(application.files) &&
+		application.files[application.selected].Path != "" &&
+		application.files[application.selected].Status != media.Unsupported
+}
+
+func (application *Application) canRemove() bool {
+	return !application.busy && application.selected >= 0 && application.selected < len(application.files)
+}
+
+func (application *Application) contextActions() (*fyne.MenuItem, *fyne.MenuItem, *fyne.MenuItem) {
+	renameItem := fyne.NewMenuItem("Rename", application.confirmRename)
+	renameItem.Disabled = !application.canRename()
+	reviewItem := fyne.NewMenuItem("Review", application.reviewSelected)
+	reviewItem.Disabled = !application.canReview()
+	removeItem := fyne.NewMenuItem("Remove", application.removeSelected)
+	removeItem.Disabled = !application.canRemove()
+	return renameItem, reviewItem, removeItem
 }
 
 func (application *Application) updateFileArea() {
@@ -1336,8 +1402,61 @@ func isDarkColor(value color.Color) bool {
 	return (red*299+green*587+blue*114)/1000 < 0x8000
 }
 
+type fileTable struct {
+	widget.Table
+	modifiers    fyne.KeyModifier
+	contextClick bool
+	menu         func() (*fyne.MenuItem, *fyne.MenuItem, *fyne.MenuItem)
+}
+
+func newFileTable(
+	length func() (int, int),
+	create func() fyne.CanvasObject,
+	update func(widget.TableCellID, fyne.CanvasObject),
+) *fileTable {
+	table := &fileTable{}
+	table.Length = length
+	table.CreateCell = create
+	table.UpdateCell = update
+	table.ExtendBaseWidget(table)
+	return table
+}
+
+func (table *fileTable) Tapped(event *fyne.PointEvent) {
+	table.modifiers = 0
+	defer func() { table.modifiers = 0 }()
+	if driver, ok := fyne.CurrentApp().Driver().(desktop.Driver); ok {
+		table.modifiers = driver.CurrentKeyModifiers()
+	}
+	if table.modifiers&(fyne.KeyModifierShortcutDefault|fyne.KeyModifierShift) != 0 {
+		table.Table.UnselectAll()
+	}
+	table.Table.Tapped(event)
+}
+
+func (table *fileTable) TypedKey(event *fyne.KeyEvent) {
+	table.modifiers = 0
+	table.Table.TypedKey(event)
+}
+
+func (table *fileTable) TappedSecondary(event *fyne.PointEvent) {
+	table.contextClick = true
+	table.modifiers = 0
+	table.Table.Tapped(event)
+	table.contextClick = false
+	if table.menu == nil {
+		return
+	}
+	renameItem, reviewItem, removeItem := table.menu()
+	widget.ShowPopUpMenuAtPosition(
+		fyne.NewMenu("", renameItem, reviewItem, fyne.NewMenuItemSeparator(), removeItem),
+		fyne.CurrentApp().Driver().CanvasForObject(table),
+		event.AbsolutePosition,
+	)
+}
+
 type fileTableLayout struct {
-	table *widget.Table
+	table *fileTable
 }
 
 func (layout *fileTableLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
