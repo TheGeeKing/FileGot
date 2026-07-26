@@ -11,8 +11,36 @@ import (
 	"github.com/TheGeeKing/FileGot/internal/media"
 )
 
+type templateAssistPopup struct {
+	widget.BaseWidget
+	content fyne.CanvasObject
+	entry   *advancedTemplateEntry
+}
+
+func newTemplateAssistPopup(content fyne.CanvasObject, entry *advancedTemplateEntry) *templateAssistPopup {
+	popup := &templateAssistPopup{content: content, entry: entry}
+	popup.ExtendBaseWidget(popup)
+	return popup
+}
+
+func (popup *templateAssistPopup) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(popup.content)
+}
+
+func (popup *templateAssistPopup) FocusGained() {}
+
+func (popup *templateAssistPopup) FocusLost() {}
+
+func (popup *templateAssistPopup) TypedRune(character rune) {
+	popup.entry.TypedRune(character)
+}
+
+func (popup *templateAssistPopup) TypedKey(key *fyne.KeyEvent) {
+	popup.entry.TypedKey(key)
+}
+
 type advancedTemplateEntry struct {
-	*widget.Entry
+	widget.Entry
 
 	kind              media.Kind
 	enabled           func() bool
@@ -30,11 +58,11 @@ type advancedTemplateEntry struct {
 
 func newAdvancedTemplateEntry(kind media.Kind, enabled func() bool) *advancedTemplateEntry {
 	entry := &advancedTemplateEntry{
-		Entry:   widget.NewEntry(),
 		kind:    kind,
 		enabled: enabled,
 	}
 	entry.ExtendBaseWidget(entry)
+	entry.Wrapping = fyne.TextWrap(fyne.TextTruncateClip)
 	entry.Entry.OnChanged = entry.changed
 	entry.Entry.OnCursorChanged = entry.cursorChanged
 	return entry
@@ -198,9 +226,11 @@ func (entry *advancedTemplateEntry) showPopup(content fyne.CanvasObject, size fy
 	if canvas == nil {
 		return
 	}
-	entry.popup = widget.NewPopUp(content, canvas)
+	assist := newTemplateAssistPopup(content, entry)
+	entry.popup = widget.NewPopUp(assist, canvas)
 	entry.popup.Resize(size)
 	entry.popup.ShowAtRelativePosition(entry.CursorPosition().Add(fyne.NewPos(0, 28)), entry)
+	canvas.Focus(assist)
 }
 
 func (entry *advancedTemplateEntry) selectCompletion(index int) {

@@ -13,6 +13,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -656,6 +657,36 @@ func TestAdvancedTemplateEntryAcceptsAndDismissesCompletions(t *testing.T) {
 	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEnter})
 	if entry.Text != "prefix {primaryTitle} suffix" {
 		t.Fatalf("completion replaced unrelated text: %q", entry.Text)
+	}
+}
+
+func TestAdvancedTemplateEntryAcceptsFocusedCanvasTyping(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	window := app.NewWindow("Advanced template")
+	entry := newAdvancedTemplateEntry(media.Movie, func() bool { return true })
+	window.SetContent(entry)
+	window.Show()
+	t.Cleanup(window.Close)
+
+	mouse := &desktop.MouseEvent{
+		PointEvent: fyne.PointEvent{Position: fyne.NewPos(1, 1)},
+		Button:     desktop.MouseButtonPrimary,
+	}
+	entry.MouseDown(mouse)
+	entry.MouseUp(mouse)
+	if window.Canvas().Focused() != entry {
+		t.Fatal("clicking the template entry did not focus it")
+	}
+	window.Canvas().Focused().TypedRune('{')
+	if window.Canvas().Focused() == nil {
+		t.Fatal("opening completions stole focus from the template entry")
+	}
+	window.Canvas().Focused().TypedRune('n')
+	window.Canvas().Focused().TypedRune('.')
+
+	if entry.Text != "{n." {
+		t.Fatalf("focused canvas typing = %q, want %q", entry.Text, "{n.")
 	}
 }
 
