@@ -7,9 +7,9 @@ import (
 
 	"fyne.io/fyne/v2/app"
 
-	"github.com/thegeeking/FileGot/internal/rename"
-	"github.com/thegeeking/FileGot/internal/settings"
-	"github.com/thegeeking/FileGot/internal/ui"
+	"github.com/TheGeeKing/FileGot/internal/rename"
+	"github.com/TheGeeKing/FileGot/internal/settings"
+	"github.com/TheGeeKing/FileGot/internal/ui"
 )
 
 const appID = "com.github.thegeeking.filegot"

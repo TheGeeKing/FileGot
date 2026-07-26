@@ -7,7 +7,7 @@ import (
 
 	"fyne.io/fyne/v2"
 
-	"github.com/thegeeking/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/media"
 )
 
 const (
@@ -28,6 +28,7 @@ type Settings struct {
 	EpisodePattern      string
 	ScanSubfolders      bool
 	AutoMatch           bool
+	IncludeSpecials     bool
 	ConfirmRename       bool
 	IgnoreHidden        bool
 }
@@ -43,13 +44,14 @@ func NewStore(preferences fyne.Preferences) *Store {
 func Defaults() Settings {
 	movie, episode := Preset(PresetClean)
 	return Settings{
-		Language:       "en-US",
-		MoviePattern:   movie,
-		EpisodePattern: episode,
-		ScanSubfolders: true,
-		AutoMatch:      true,
-		ConfirmRename:  true,
-		IgnoreHidden:   true,
+		Language:        "en-US",
+		MoviePattern:    movie,
+		EpisodePattern:  episode,
+		ScanSubfolders:  true,
+		AutoMatch:       true,
+		IncludeSpecials: true,
+		ConfirmRename:   true,
+		IgnoreHidden:    true,
 	}
 }
 
@@ -86,6 +88,7 @@ func (store *Store) Load() Settings {
 		EpisodePattern:      prefs.StringWithFallback("naming.episode", defaults.EpisodePattern),
 		ScanSubfolders:      prefs.BoolWithFallback("behavior.scan_subfolders", defaults.ScanSubfolders),
 		AutoMatch:           prefs.BoolWithFallback("behavior.auto_match", defaults.AutoMatch),
+		IncludeSpecials:     prefs.BoolWithFallback("behavior.include_specials", defaults.IncludeSpecials),
 		ConfirmRename:       prefs.BoolWithFallback("behavior.confirm_rename", defaults.ConfirmRename),
 		IgnoreHidden:        prefs.BoolWithFallback("behavior.ignore_hidden", defaults.IgnoreHidden),
 	}
@@ -117,6 +120,7 @@ func (store *Store) Save(value Settings) error {
 	prefs.SetString("naming.episode", value.EpisodePattern)
 	prefs.SetBool("behavior.scan_subfolders", value.ScanSubfolders)
 	prefs.SetBool("behavior.auto_match", value.AutoMatch)
+	prefs.SetBool("behavior.include_specials", value.IncludeSpecials)
 	prefs.SetBool("behavior.confirm_rename", value.ConfirmRename)
 	prefs.SetBool("behavior.ignore_hidden", value.IgnoreHidden)
 	return nil

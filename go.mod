@@ -1,4 +1,4 @@
-module github.com/thegeeking/FileGot
+module github.com/TheGeeKing/FileGot
 
 go 1.26.0
 

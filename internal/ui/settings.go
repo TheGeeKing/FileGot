@@ -9,9 +9,9 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/thegeeking/FileGot/internal/media"
-	"github.com/thegeeking/FileGot/internal/settings"
-	"github.com/thegeeking/FileGot/internal/tmdb"
+	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/settings"
+	"github.com/TheGeeKing/FileGot/internal/tmdb"
 )
 
 var fallbackLanguages = []string{"de-DE", "en-GB", "en-US", "es-ES", "fr-FR", "it-IT", "ja-JP", "pt-BR"}
@@ -53,6 +53,8 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	scanSubfolders.SetChecked(current.ScanSubfolders)
 	autoMatch := widget.NewCheck("Match automatically after adding files", nil)
 	autoMatch.SetChecked(current.AutoMatch)
+	includeSpecials := widget.NewCheck("Include specials when importing all seasons", nil)
+	includeSpecials.SetChecked(current.IncludeSpecials)
 	confirmRename := widget.NewCheck("Confirm before renaming", nil)
 	confirmRename.SetChecked(current.ConfirmRename)
 	ignoreHidden := widget.NewCheck("Ignore hidden files and folders", nil)
@@ -69,7 +71,8 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 			PreferOriginalTitle: preferOriginal.Checked, IncludeAdult: includeAdult.Checked,
 			MoviePattern: moviePattern.Text, EpisodePattern: episodePattern.Text,
 			ScanSubfolders: scanSubfolders.Checked, AutoMatch: autoMatch.Checked,
-			ConfirmRename: confirmRename.Checked, IgnoreHidden: ignoreHidden.Checked,
+			IncludeSpecials: includeSpecials.Checked,
+			ConfirmRename:   confirmRename.Checked, IgnoreHidden: ignoreHidden.Checked,
 		}
 	}
 
@@ -122,6 +125,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	includeAdult.OnChanged = func(bool) { refreshValidation() }
 	scanSubfolders.OnChanged = func(bool) { refreshValidation() }
 	autoMatch.OnChanged = func(bool) { refreshValidation() }
+	includeSpecials.OnChanged = func(bool) { refreshValidation() }
 	confirmRename.OnChanged = func(bool) { refreshValidation() }
 	ignoreHidden.OnChanged = func(bool) { refreshValidation() }
 
@@ -174,6 +178,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	behaviorTab := container.NewTabItem("Behavior", container.NewVBox(
 		scanSubfolders,
 		autoMatch,
+		includeSpecials,
 		confirmRename,
 		ignoreHidden,
 	))
@@ -199,6 +204,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		episodePattern.SetText(defaults.EpisodePattern)
 		scanSubfolders.SetChecked(defaults.ScanSubfolders)
 		autoMatch.SetChecked(defaults.AutoMatch)
+		includeSpecials.SetChecked(defaults.IncludeSpecials)
 		confirmRename.SetChecked(defaults.ConfirmRename)
 		ignoreHidden.SetChecked(defaults.IgnoreHidden)
 		presetSelect.SetSelected(settings.PresetClean)

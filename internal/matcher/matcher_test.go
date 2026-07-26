@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/thegeeking/FileGot/internal/media"
-	"github.com/thegeeking/FileGot/internal/settings"
-	"github.com/thegeeking/FileGot/internal/tmdb"
+	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/settings"
+	"github.com/TheGeeKing/FileGot/internal/tmdb"
 )
 
 func TestMatchMovieAndGroupedEpisodes(t *testing.T) {

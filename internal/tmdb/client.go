@@ -35,6 +35,13 @@ type Show struct {
 	FirstAirDate string `json:"first_air_date"`
 }
 
+type Season struct {
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	SeasonNumber int    `json:"season_number"`
+	EpisodeCount int    `json:"episode_count"`
+}
+
 type Episode struct {
 	ID            int    `json:"id"`
 	Name          string `json:"name"`
@@ -108,6 +115,28 @@ func (client *Client) Episode(ctx context.Context, seriesID, season, episode int
 	path := fmt.Sprintf("/tv/%d/season/%d/episode/%d", seriesID, season, episode)
 	err := client.get(ctx, path, url.Values{"language": {language}}, &response)
 	return response, err
+}
+
+func (client *Client) ShowSeasons(ctx context.Context, seriesID int, language string) ([]Season, error) {
+	var response struct {
+		Seasons []Season `json:"seasons"`
+	}
+	path := fmt.Sprintf("/tv/%d", seriesID)
+	if err := client.get(ctx, path, url.Values{"language": {language}}, &response); err != nil {
+		return nil, err
+	}
+	return response.Seasons, nil
+}
+
+func (client *Client) SeasonEpisodes(ctx context.Context, seriesID, season int, language string) ([]Episode, error) {
+	var response struct {
+		Episodes []Episode `json:"episodes"`
+	}
+	path := fmt.Sprintf("/tv/%d/season/%d", seriesID, season)
+	if err := client.get(ctx, path, url.Values{"language": {language}}, &response); err != nil {
+		return nil, err
+	}
+	return response.Episodes, nil
 }
 
 func (client *Client) Translations(ctx context.Context) ([]string, error) {
