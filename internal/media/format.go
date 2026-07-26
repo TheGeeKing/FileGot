@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode"
 )
@@ -66,6 +65,10 @@ func Format(pattern, originalPath string, candidate Candidate) (string, error) {
 		return "", fmt.Errorf("pattern contains unresolved tokens")
 	}
 
+	return finishName(name, originalPath)
+}
+
+func finishName(name, originalPath string) (string, error) {
 	extension := filepath.Ext(originalPath)
 	name = Sanitize(name, 240-len([]rune(extension)))
 	if name == "" {
@@ -99,11 +102,4 @@ func Sanitize(value string, maxRunes int) string {
 		}
 	}
 	return value
-}
-
-func number(value int) string {
-	if value == 0 {
-		return ""
-	}
-	return strconv.Itoa(value)
 }

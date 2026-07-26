@@ -81,6 +81,172 @@ func TestFormatAndSanitize(t *testing.T) {
 	}
 }
 
+func TestFormatAdvancedOptionalMovieMetadata(t *testing.T) {
+	pattern := `{n}{" ($y)"}{" [$primaryTitle]"}`
+	movie := Candidate{
+		ID: 438631, Kind: Movie, Title: `Dune: Part Two`,
+		OriginalTitle: "Dune: Deuxième Partie", Year: 2024,
+	}
+
+	got, err := FormatAdvanced(pattern, "release.MKV", movie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Dune Part Two (2024) [Dune Deuxième Partie].MKV"; got != want {
+		t.Fatalf("FormatAdvanced() = %q, want %q", got, want)
+	}
+
+	movie.Year = 0
+	movie.OriginalTitle = ""
+	got, err = FormatAdvanced(pattern, "release.MKV", movie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Dune Part Two.MKV"; got != want {
+		t.Fatalf("FormatAdvanced() without optional metadata = %q, want %q", got, want)
+	}
+}
+
+func TestFormatAdvancedEpisodeData(t *testing.T) {
+	episode := Candidate{
+		ID: 100088, Kind: Episode, Title: "The Last of Us", OriginalTitle: "The Last of Us",
+		SeriesYear: 2023, Season: 1, Episode: 3, EpisodeTitle: "Long, Long Time",
+	}
+	pattern := `{n} ({primaryTitle}) {y} - {s00e00} - {t} [tmdb-{tmdbid}]`
+
+	got, err := FormatAdvanced(pattern, "episode.mp4", episode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "The Last of Us (The Last of Us) 2023 - S01E03 - Long, Long Time [tmdb-100088].mp4"
+	if got != want {
+		t.Fatalf("FormatAdvanced() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatAdvancedRejectsMissingRequiredData(t *testing.T) {
+	_, err := FormatAdvanced(`{n} ({y})`, "movie.mkv", Candidate{
+		Kind: Movie, Year: 2024,
+	})
+	if err == nil {
+		t.Fatal("missing movie title should be a row error")
+	}
+}
+
+func TestFormatAdvancedRejectsMissingReferencedData(t *testing.T) {
+	_, err := FormatAdvanced(`{n} ({y})`, "movie.mkv", Candidate{
+		Kind: Movie, Title: "Dune",
+	})
+	if err == nil {
+		t.Fatal("missing referenced year should be a row error")
+	}
+}
+
+func TestFormatAdvancedAllowsPresentBindingToTransformEmpty(t *testing.T) {
+	got, err := FormatAdvanced(`{n.removeAll(/.*/)}suffix`, "movie.mkv", Candidate{
+		Kind: Movie, Title: "Dune",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "suffix.mkv"; got != want {
+		t.Fatalf("FormatAdvanced() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatAdvancedConditionals(t *testing.T) {
+	pattern := `{n}{(y == 2024 && n != "") || !primaryTitle ? " [$y]" : ""}`
+	movie := Candidate{Kind: Movie, Title: "Dune", Year: 2024}
+
+	got, err := FormatAdvanced(pattern, "movie.mkv", movie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Dune [2024].mkv"; got != want {
+		t.Fatalf("FormatAdvanced() = %q, want %q", got, want)
+	}
+
+	movie.Year = 0
+	got, err = FormatAdvanced(pattern, "movie.mkv", movie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Dune.mkv"; got != want {
+		t.Fatalf("FormatAdvanced() without year = %q, want %q", got, want)
+	}
+}
+
+func TestAdvancedTemplateHelpers(t *testing.T) {
+	tests := []struct {
+		name    string
+		title   string
+		pattern string
+		want    string
+	}{
+		{name: "lower", title: "Dune Part Two", pattern: `{n.lower()}`, want: "dune part two.mkv"},
+		{name: "upper", title: "Dune Part Two", pattern: `{n.upper()}`, want: "DUNE PART TWO.mkv"},
+		{name: "trim", title: "  Dune Part Two  ", pattern: `{n.trim()}`, want: "Dune Part Two.mkv"},
+		{name: "space", title: "Dune Part Two", pattern: `{n.space('.')}`, want: "Dune.Part.Two.mkv"},
+		{name: "pad", title: "Dune", pattern: `{y.pad(4)}`, want: "0007.mkv"},
+		{name: "replace", title: "Dune Part Two", pattern: `{n.replace('Two', '2')}`, want: "Dune Part 2.mkv"},
+		{name: "default", title: "Dune", pattern: `{primaryTitle.default('Unknown')}`, want: "Unknown.mkv"},
+		{name: "colon", title: "Dune: Part Two", pattern: `{n.colon(' - ')}`, want: "Dune - Part Two.mkv"},
+		{name: "slash", title: `Dune/Part\Two`, pattern: `{n.slash('.')}`, want: "Dune.Part.Two.mkv"},
+		{name: "before", title: "Dune - Part Two", pattern: `{n.before(' - ')}`, want: "Dune.mkv"},
+		{name: "after", title: "Dune - Part Two", pattern: `{n.after(' - ')}`, want: "Part Two.mkv"},
+		{name: "removeAll", title: "Dune!", pattern: `{n.removeAll(/[!?.]+$/)}`, want: "Dune.mkv"},
+		{name: "replaceAll", title: "Dune   Part Two", pattern: `{n.replaceAll(/\s+/, '.')}`, want: "Dune.Part.Two.mkv"},
+		{name: "regex quantifier", title: "Dune 2024", pattern: `{n.removeAll(/\s\d{4}$/)}`, want: "Dune.mkv"},
+		{name: "upperInitial", title: "the day a demon was born", pattern: `{n.upperInitial()}`, want: "The Day A Demon Was Born.mkv"},
+		{name: "lowerTrail", title: "Gundam SEED", pattern: `{n.lowerTrail()}`, want: "Gundam Seed.mkv"},
+		{name: "sortName", title: "The Walking Dead", pattern: `{n.sortName()}`, want: "Walking Dead.mkv"},
+		{name: "initialName", title: "James Cameron", pattern: `{n.initialName()}`, want: "J. Cameron.mkv"},
+		{name: "acronym", title: "Deep Space 9", pattern: `{n.acronym()}`, want: "DS9.mkv"},
+		{name: "roman", title: "Star Wars Episode 4", pattern: `{n.roman()}`, want: "Star Wars Episode IV.mkv"},
+		{name: "clean", title: "Dune: Part Two?", pattern: `{n.clean()}`, want: "Dune Part Two.mkv"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := FormatAdvanced(test.pattern, "movie.mkv", Candidate{
+				Kind: Movie, Title: test.title, Year: 7,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("FormatAdvanced() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateAdvancedTemplate(t *testing.T) {
+	valid := `{n.trim().space('.').lower()}{" ($y)"}`
+	if err := ValidateAdvancedPattern(Movie, valid); err != nil {
+		t.Fatalf("valid template rejected: %v", err)
+	}
+
+	invalid := []string{
+		`{{range .Title}}{{.}}{{end}}`,
+		`{resolution}`,
+		`{id}`,
+		`{n.unknown()}`,
+		`{n.lower('extra')}`,
+		`{n.replace('one')}`,
+		`{y == 2024 ? n : n.removeAll(/[invalid/)}`,
+		`{n; env('HOME')}`,
+		`{n`,
+	}
+	for _, pattern := range invalid {
+		t.Run(pattern, func(t *testing.T) {
+			if err := ValidateAdvancedPattern(Movie, pattern); err == nil {
+				t.Fatal("unsafe or invalid template was accepted")
+			}
+		})
+	}
+}
+
 func TestValidatePattern(t *testing.T) {
 	if err := ValidatePattern(Movie, "{title} ({season})"); err == nil {
 		t.Fatal("movie pattern accepted episode token")

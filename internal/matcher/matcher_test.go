@@ -40,6 +40,9 @@ func TestMatchMovieAndGroupedEpisodes(t *testing.T) {
 	engine := New(client)
 	options := settings.Defaults()
 	options.TMDBToken = "token"
+	options.NamingMode = settings.NamingAdvanced
+	options.MovieTemplate = `{n.upper()}`
+	options.EpisodeTemplate = `{n}.{s00e00}.{t}`
 	files := []media.File{
 		{Path: "Dune.Part.Two.2024.mkv", Parsed: media.Parse("Dune.Part.Two.2024.mkv")},
 		{Path: "The.Last.of.Us.S01E01.mkv", Parsed: media.Parse("The.Last.of.Us.S01E01.mkv")},
@@ -57,6 +60,9 @@ func TestMatchMovieAndGroupedEpisodes(t *testing.T) {
 	}
 	if loads := seasonLoads.Load(); loads != 1 {
 		t.Fatalf("season loaded %d times, want 1", loads)
+	}
+	if got[0].Proposed != "DUNE PART TWO.mkv" || got[1].Proposed != "The Last of Us.S01E01.Episode one.mkv" {
+		t.Fatalf("advanced names = %q and %q", got[0].Proposed, got[1].Proposed)
 	}
 
 	got = engine.Match(context.Background(), got, options)
