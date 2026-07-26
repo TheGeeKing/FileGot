@@ -15,8 +15,23 @@ var (
 	yearPattern          = regexp.MustCompile(`(?:^|[\s._([{-])((?:19|20)\d{2})(?:$|[\s._)\]}-])`)
 	seasonFolderPattern  = regexp.MustCompile(`(?i)^(?:s(?:eason)?|saison)\s*\d+$`)
 	bracketPattern       = regexp.MustCompile(`[\[\{][^\]\}]*[\]\}]`)
+	idContainerPattern   = regexp.MustCompile(`\[[^\]]+\]|\{[^}]+\}|\([^)]*\)`)
+	idMarkerPattern      = regexp.MustCompile(`(?i)^(?:(tmdb|tvdb)-([1-9]\d*)|(?:imdb-)?(tt[1-9]\d*))$`)
 	spacePattern         = regexp.MustCompile(`\s+`)
 )
+
+type IDSource string
+
+const (
+	TMDB IDSource = "tmdb"
+	TVDB IDSource = "tvdb"
+	IMDB IDSource = "imdb"
+)
+
+type Identifier struct {
+	Source IDSource
+	Value  string
+}
 
 var releaseTags = map[string]struct{}{
 	"2160p": {}, "1080p": {}, "720p": {}, "480p": {},
@@ -58,6 +73,38 @@ func Parse(path string) Parsed {
 
 	query, year := titleAndYear(base)
 	return Parsed{Kind: Movie, Query: query, Year: year}
+}
+
+func IDHint(path string) (Identifier, bool) {
+	if identifier, ok := identifierIn(filepath.Base(path)); ok {
+		return identifier, true
+	}
+	parent := filepath.Dir(filepath.Clean(path))
+	for parent != "." && parent != filepath.Dir(parent) {
+		if identifier, ok := identifierIn(filepath.Base(parent)); ok {
+			return identifier, true
+		}
+		parent = filepath.Dir(parent)
+	}
+	return Identifier{}, false
+}
+
+func identifierIn(name string) (Identifier, bool) {
+	for _, container := range idContainerPattern.FindAllString(name, -1) {
+		marker := idMarkerPattern.FindStringSubmatch(container[1 : len(container)-1])
+		if marker == nil {
+			continue
+		}
+		if marker[3] != "" {
+			return Identifier{Source: IMDB, Value: strings.ToLower(marker[3])}, true
+		}
+		source := TMDB
+		if strings.EqualFold(marker[1], "tvdb") {
+			source = TVDB
+		}
+		return Identifier{Source: source, Value: marker[2]}, true
+	}
+	return Identifier{}, false
 }
 
 func ParentHints(path string) []Parsed {

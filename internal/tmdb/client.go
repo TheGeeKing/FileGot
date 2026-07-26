@@ -131,6 +131,19 @@ func (client *Client) ShowDetails(ctx context.Context, id int, language string) 
 	return show, err
 }
 
+func (client *Client) Find(
+	ctx context.Context,
+	externalID, externalSource, language string,
+) ([]Movie, []Show, error) {
+	var response struct {
+		Movies []Movie `json:"movie_results"`
+		Shows  []Show  `json:"tv_results"`
+	}
+	values := url.Values{"external_source": {externalSource}, "language": {language}}
+	err := client.get(ctx, "/find/"+url.PathEscape(externalID), values, &response)
+	return response.Movies, response.Shows, err
+}
+
 func (client *Client) ShowSeasons(ctx context.Context, seriesID int, language string) ([]Season, error) {
 	var response struct {
 		Seasons []Season `json:"seasons"`

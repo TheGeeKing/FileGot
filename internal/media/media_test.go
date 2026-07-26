@@ -56,6 +56,45 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestIDHint(t *testing.T) {
+	tests := []struct {
+		path string
+		want Identifier
+		ok   bool
+	}{
+		{
+			path: filepath.Join("Movies [tmdb-999]", "Film [tmdb-123].mkv"),
+			want: Identifier{Source: TMDB, Value: "123"}, ok: true,
+		},
+		{
+			path: filepath.Join("Library {tvdb-456}", "Season 1", "Show.S01E01.mkv"),
+			want: Identifier{Source: TVDB, Value: "456"}, ok: true,
+		},
+		{
+			path: filepath.Join("Movies (imdb-tt1234567)", "Film.mkv"),
+			want: Identifier{Source: IMDB, Value: "tt1234567"}, ok: true,
+		},
+		{
+			path: "Film (tt7654321).mkv",
+			want: Identifier{Source: IMDB, Value: "tt7654321"}, ok: true,
+		},
+		{path: filepath.Join("Movies [tmdb-999]", "Film [tmdb-0].mkv"), want: Identifier{Source: TMDB, Value: "999"}, ok: true},
+		{path: "Film [tmdb-nope].mkv"},
+		{path: "Film [tvdb--1].mkv"},
+		{path: "Film [imdb-123].mkv"},
+		{path: "Film [tmdb-123).mkv"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			got, ok := IDHint(test.path)
+			if ok != test.ok || got != test.want {
+				t.Fatalf("IDHint(%q) = %#v, %t; want %#v, %t", test.path, got, ok, test.want, test.ok)
+			}
+		})
+	}
+}
+
 func TestFormatAndSanitize(t *testing.T) {
 	movie := Candidate{ID: 438631, Kind: Movie, Title: `Dune: Part Two`, Year: 2024}
 	got, err := Format("{title} ({year}) [tmdb-{tmdb_id}]", "release.MKV", movie)

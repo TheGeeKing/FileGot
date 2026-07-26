@@ -100,6 +100,61 @@ func TestMatchFallsBackToShowFolder(t *testing.T) {
 	}
 }
 
+func TestMatchUsesFilenameAndParentIDs(t *testing.T) {
+	var searches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/movie/123":
+			_, _ = writer.Write([]byte(`{"id":123,"title":"Filename Movie","release_date":"2024-01-01"}`))
+		case "/tv/456":
+			_, _ = writer.Write([]byte(`{"id":456,"name":"Parent Show","first_air_date":"2020-01-01"}`))
+		case "/tv/456/season/2":
+			_, _ = writer.Write([]byte(`{"episodes":[{"name":"Exact Episode","season_number":2,"episode_number":3}]}`))
+		case "/find/789":
+			if request.URL.Query().Get("external_source") != "tvdb_id" {
+				t.Fatalf("external source = %q", request.URL.Query().Get("external_source"))
+			}
+			_, _ = writer.Write([]byte(`{"tv_results":[{"id":456,"name":"Parent Show","first_air_date":"2020-01-01"}]}`))
+		case "/find/tt7654321":
+			if request.URL.Query().Get("external_source") != "imdb_id" {
+				t.Fatalf("external source = %q", request.URL.Query().Get("external_source"))
+			}
+			_, _ = writer.Write([]byte(`{"movie_results":[{"id":321,"title":"IMDb Movie","release_date":"2022-01-01"}]}`))
+		case "/search/movie":
+			searches.Add(1)
+			_, _ = writer.Write([]byte(`{"results":[{"id":7,"title":"Fallback","release_date":"2024-01-01"}]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	files := []media.File{
+		{Path: filepath.Join("Parent [tmdb-999]", "Movie [tmdb-123].mkv"), Parsed: media.Parsed{Kind: media.Movie}},
+		{Path: filepath.Join("Show {tvdb-789}", "Season 2", "Episode.S02E03.mkv"), Parsed: media.Parsed{Kind: media.Episode, Season: 2, Episode: 3}},
+		{Path: "Movie (tt7654321).mkv", Parsed: media.Parsed{Kind: media.Movie}},
+		{Path: "Fallback [tmdb-nope].mkv", Parsed: media.Parsed{Kind: media.Movie, Query: "Fallback", Year: 2024}},
+	}
+
+	got := engine.Match(context.Background(), files, options)
+	if got[0].Status != media.Ready || got[0].Candidate.ID != 123 {
+		t.Fatalf("filename TMDB match = %#v", got[0])
+	}
+	if got[1].Status != media.Ready || got[1].Candidate.ID != 456 ||
+		got[1].Candidate.Season != 2 || got[1].Candidate.Episode != 3 {
+		t.Fatalf("parent TVDB match = %#v", got[1])
+	}
+	if got[2].Status != media.Ready || got[2].Candidate.ID != 321 {
+		t.Fatalf("IMDb match = %#v", got[2])
+	}
+	if got[3].Status != media.Ready || searches.Load() != 1 {
+		t.Fatalf("malformed fallback = %#v, searches=%d", got[3], searches.Load())
+	}
+}
+
 func TestAmbiguousMovieRequiresReview(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

@@ -31,9 +31,14 @@ func (matcher *Matcher) Match(ctx context.Context, input []media.File, options s
 
 	var tvGroups [][]int
 	var movieIndices []int
+	var hintedIndices []int
 	grouped := make(map[int]bool)
 	for index := range files {
 		if files[index].Imported || files[index].Status == media.Unsupported {
+			continue
+		}
+		if _, ok := media.IDHint(files[index].Path); ok {
+			hintedIndices = append(hintedIndices, index)
 			continue
 		}
 		if files[index].Parsed.Kind == media.Episode {
@@ -47,6 +52,22 @@ func (matcher *Matcher) Match(ctx context.Context, input []media.File, options s
 			continue
 		}
 		movieIndices = append(movieIndices, index)
+	}
+
+	for _, index := range hintedIndices {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			withLimit(ctx, semaphore, func() {
+				identifier, _ := media.IDHint(files[index].Path)
+				candidate, err := matcher.LookupIdentifier(ctx, files[index].Parsed, identifier, options)
+				if err != nil {
+					setError(&files[index], err)
+					return
+				}
+				files[index] = matcher.Resolve(ctx, files[index], candidate, options)
+			})
+		}(index)
 	}
 
 	for _, index := range movieIndices {
@@ -141,6 +162,40 @@ func (matcher *Matcher) Lookup(
 	default:
 		return media.Candidate{}, fmt.Errorf("unsupported media kind %q", parsed.Kind)
 	}
+}
+
+func (matcher *Matcher) LookupIdentifier(
+	ctx context.Context,
+	parsed media.Parsed,
+	identifier media.Identifier,
+	options settings.Settings,
+) (media.Candidate, error) {
+	if identifier.Source == media.TMDB {
+		id, err := strconv.Atoi(identifier.Value)
+		if err != nil {
+			return media.Candidate{}, fmt.Errorf("invalid TMDB ID %q", identifier.Value)
+		}
+		return matcher.Lookup(ctx, parsed, id, options)
+	}
+	source := "imdb_id"
+	switch identifier.Source {
+	case media.TVDB:
+		source = "tvdb_id"
+	case media.IMDB:
+	default:
+		return media.Candidate{}, fmt.Errorf("unsupported ID source %q", identifier.Source)
+	}
+	movies, shows, err := matcher.client.Find(ctx, identifier.Value, source, options.Language)
+	if err != nil {
+		return media.Candidate{}, err
+	}
+	if parsed.Kind == media.Movie && len(movies) > 0 {
+		return movieCandidate(movies[0], options), nil
+	}
+	if parsed.Kind == media.Episode && len(shows) > 0 {
+		return showCandidate(shows[0], parsed, options), nil
+	}
+	return media.Candidate{}, fmt.Errorf("%s ID %s has no matching %s", identifier.Source, identifier.Value, parsed.Kind)
 }
 
 func movieCandidate(result tmdb.Movie, options settings.Settings) media.Candidate {
