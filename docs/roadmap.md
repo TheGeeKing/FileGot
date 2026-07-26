@@ -25,10 +25,11 @@ not use a parent or sub-issue hierarchy.
 | [#11](https://github.com/TheGeeKing/FileGot/issues/11) | AniDB provider | Add anime matching and absolute episode numbering | #9; reuses #1 | Blocked |
 | [#12](https://github.com/TheGeeKing/FileGot/issues/12) | Advanced templates | Add safe conditional filename templates | — | Ready |
 | [#13](https://github.com/TheGeeKing/FileGot/issues/13) | Visual naming editor | Compose advanced templates with Scratch-like blocks | #12 | Blocked |
+| [#14](https://github.com/TheGeeKing/FileGot/issues/14) | Expected TV episodes | Import episode names and pair them with local video files | — | Ready |
 
 ## Dependency order
 
-- Start independently with #1, #2, #8, #9, or #12.
+- Start independently with #1, #2, #8, #9, #12, or #14.
 - After #2, work on #3, #4, or #7.
 - After #4, work on #5; #6 remains on standby until explicitly activated.
 - After #9, work on #10 or #11.
