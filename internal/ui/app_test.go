@@ -37,9 +37,11 @@ func TestMainWindowPresentation(t *testing.T) {
 	if prompt == nil || !application.empty.Visible() || application.table.Visible() {
 		t.Fatal("empty window should show the drop prompt instead of the table")
 	}
-	if !menuContains(application.window.MainMenu(), "Settings") ||
+	if !menuContains(application.window.MainMenu(), "Add File") ||
+		!menuContains(application.window.MainMenu(), "Add Folder") ||
+		!menuContains(application.window.MainMenu(), "Settings") ||
 		!menuContains(application.window.MainMenu(), "About") {
-		t.Fatal("main menu should contain Settings and About")
+		t.Fatal("main menu should contain Add File, Add Folder, Settings, and About")
 	}
 	if application.renameButton.Importance != widget.HighImportance {
 		t.Fatal("Rename should be the primary action")

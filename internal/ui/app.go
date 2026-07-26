@@ -46,17 +46,13 @@ type Application struct {
 	cancel        context.CancelFunc
 	busy          bool
 
-	addFileButton        *widget.Button
-	addFolderButton      *widget.Button
-	importShowButton     *widget.Button
-	emptyAddFileButton   *widget.Button
-	emptyAddFolderButton *widget.Button
-	removeButton         *widget.Button
-	clearButton          *widget.Button
-	matchButton          *widget.Button
-	reviewButton         *widget.Button
-	renameButton         *widget.Button
-	undoButton           *widget.Button
+	importShowButton *widget.Button
+	removeButton     *widget.Button
+	clearButton      *widget.Button
+	matchButton      *widget.Button
+	reviewButton     *widget.Button
+	renameButton     *widget.Button
+	undoButton       *widget.Button
 }
 
 func New(app fyne.App, store *settings.Store, renamer *rename.Manager) *Application {
@@ -167,8 +163,6 @@ func (application *Application) build() {
 		application.updateButtons()
 	}
 
-	application.addFileButton = widget.NewButtonWithIcon("Add File", theme.FileIcon(), application.addFile)
-	application.addFolderButton = widget.NewButtonWithIcon("Add Folder", theme.FolderOpenIcon(), application.addFolder)
 	application.importShowButton = widget.NewButtonWithIcon("Import Show", theme.ContentAddIcon(), application.importShow)
 	application.removeButton = widget.NewButtonWithIcon("Remove", theme.ContentRemoveIcon(), application.removeSelected)
 	application.clearButton = widget.NewButtonWithIcon("Clear", theme.ContentClearIcon(), application.clear)
@@ -188,15 +182,19 @@ func (application *Application) build() {
 		})
 	}
 	application.window.SetMainMenu(fyne.NewMainMenu(
-		fyne.NewMenu("File", fyne.NewMenuItemWithIcon("Settings", theme.SettingsIcon(), showSettings)),
+		fyne.NewMenu(
+			"File",
+			fyne.NewMenuItemWithIcon("Add File", theme.FileIcon(), application.addFile),
+			fyne.NewMenuItemWithIcon("Add Folder", theme.FolderOpenIcon(), application.addFolder),
+			fyne.NewMenuItemSeparator(),
+			fyne.NewMenuItemWithIcon("Settings", theme.SettingsIcon(), showSettings),
+		),
 		fyne.NewMenu("Help", fyne.NewMenuItemWithIcon("About", theme.InfoIcon(), func() {
 			ShowAbout(application.window)
 		})),
 	))
 
 	toolbar := container.NewHScroll(container.NewHBox(
-		application.addFileButton,
-		application.addFolderButton,
 		application.importShowButton,
 		widget.NewSeparator(),
 		application.removeButton,
@@ -216,20 +214,14 @@ func (application *Application) build() {
 	application.details.Hide()
 	footer := container.NewVBox(application.details, application.status)
 	tableArea := container.New(&fileTableLayout{table: application.table}, application.table)
-	application.emptyAddFileButton = widget.NewButtonWithIcon("Add File", theme.FileIcon(), application.addFile)
-	application.emptyAddFolderButton = widget.NewButtonWithIcon("Add Folder", theme.FolderOpenIcon(), application.addFolder)
 	emptyTitle := widget.NewLabelWithStyle(
 		"Drop video files or a folder here",
 		fyne.TextAlignCenter,
 		fyne.TextStyle{Bold: true},
 	)
-	emptyHint := widget.NewLabel("or choose a source to build the rename preview")
+	emptyHint := widget.NewLabel("or use the File menu to choose a source")
 	emptyHint.Alignment = fyne.TextAlignCenter
-	emptyActions := container.NewCenter(container.NewHBox(
-		application.emptyAddFileButton,
-		application.emptyAddFolderButton,
-	))
-	application.empty = container.NewCenter(container.NewVBox(emptyTitle, emptyHint, emptyActions))
+	application.empty = container.NewCenter(container.NewVBox(emptyTitle, emptyHint))
 	fileArea := container.NewStack(tableArea, application.empty)
 	application.window.SetContent(container.NewBorder(toolbar, footer, nil, nil, fileArea))
 	application.window.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
@@ -1145,11 +1137,7 @@ func (application *Application) refresh() {
 }
 
 func (application *Application) updateButtons() {
-	setEnabled(application.addFileButton, !application.busy)
-	setEnabled(application.addFolderButton, !application.busy)
 	setEnabled(application.importShowButton, !application.busy)
-	setEnabled(application.emptyAddFileButton, !application.busy)
-	setEnabled(application.emptyAddFolderButton, !application.busy)
 	setEnabled(application.removeButton, !application.busy && application.selected >= 0)
 	setEnabled(application.clearButton, !application.busy && len(application.files) > 0)
 	canReview := !application.busy && application.selected >= 0 &&
