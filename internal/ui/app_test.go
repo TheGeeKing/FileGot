@@ -224,6 +224,23 @@ func TestReviewParsed(t *testing.T) {
 	}
 }
 
+func TestReviewCandidatesLimitsTVResults(t *testing.T) {
+	candidates := make([]media.Candidate, 12)
+	for index := range candidates {
+		candidates[index].Kind = media.Episode
+	}
+	if got := reviewCandidates(candidates); len(got) != 10 {
+		t.Fatalf("TV candidates = %d, want 10", len(got))
+	}
+
+	for index := range candidates {
+		candidates[index].Kind = media.Movie
+	}
+	if got := reviewCandidates(candidates); len(got) != 12 {
+		t.Fatalf("movie candidates = %d, want unchanged", len(got))
+	}
+}
+
 func TestExpectedEpisodeImportPairsAndDeduplicates(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)

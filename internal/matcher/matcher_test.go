@@ -80,7 +80,7 @@ func TestMatchFallsBackToShowFolder(t *testing.T) {
 				_, _ = writer.Write([]byte(`{"results":[{"id":2,"name":"Folder Show","original_name":"Folder Show"}]}`))
 				return
 			}
-			_, _ = writer.Write([]byte(`{"results":[{"id":1,"name":"Release Notes","original_name":"Release Notes"}]}`))
+			_, _ = writer.Write([]byte(`{"results":[{"id":1,"name":"Release","original_name":"Release"}]}`))
 		case "/tv/2/season/1":
 			_, _ = writer.Write([]byte(`{"episodes":[{"name":"Pilot","season_number":1,"episode_number":1}]}`))
 		default:
@@ -117,5 +117,50 @@ func TestAmbiguousMovieRequiresReview(t *testing.T) {
 	got := engine.Match(context.Background(), files, options)
 	if got[0].Status != media.Review || len(got[0].Candidates) != 2 {
 		t.Fatalf("ambiguous result = %#v", got[0])
+	}
+}
+
+func TestReviewGroupUsesParentHintAndKeepsPartialEpisodeFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/tv/42/season/1" {
+			_, _ = writer.Write([]byte(`{"episodes":[{"name":"Pilot","season_number":1,"episode_number":1}]}`))
+			return
+		}
+		if request.URL.Path == "/tv/42/season/2" {
+			_, _ = writer.Write([]byte(`{"episodes":[]}`))
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	files := []media.File{
+		{Path: filepath.Join("Show Name (2019)", "Season 01", "Release.A.S01E01.mkv"), Parsed: media.Parsed{Kind: media.Episode, Query: "Release A", Season: 1, Episode: 1}},
+		{Path: filepath.Join("Show Name (2019)", "Season 02", "Release.B.S02E02.mkv"), Parsed: media.Parsed{Kind: media.Episode, Query: "Release B", Season: 2, Episode: 2}},
+		{Path: filepath.Join("Other Show", "Release.C.S01E01.mkv"), Parsed: media.Parsed{Kind: media.Episode, Query: "Release C", Season: 1, Episode: 1}},
+	}
+
+	indices := EpisodeGroupIndices(files, 0)
+	if len(indices) != 2 {
+		t.Fatalf("episode group = %v, want both files", indices)
+	}
+	got := engine.ResolveGroup(context.Background(), files, indices, media.Candidate{
+		ID: 42, Kind: media.Episode, Title: "Show Name", SeriesYear: 2019,
+	}, options)
+	if got[0].Status != media.Ready || got[0].Candidate.Season != 1 || got[0].Candidate.Episode != 1 {
+		t.Fatalf("resolved episode = %#v", got[0])
+	}
+	if got[1].Status != media.Error || got[1].Message != "TMDB season 2 has no episode 2" {
+		t.Fatalf("unresolved episode = %#v", got[1])
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if cancelled := engine.ResolveGroup(ctx, files, indices, media.Candidate{ID: 42, Kind: media.Episode}, options); cancelled[0].Status != "" {
+		t.Fatalf("cancelled group changed files: %#v", cancelled)
 	}
 }

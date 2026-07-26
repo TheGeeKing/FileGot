@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -828,113 +829,114 @@ func (application *Application) reviewSelected() {
 		return
 	}
 	options := application.settings.Load()
-
-	queryEntry := widget.NewEntry()
-	queryEntry.SetText(file.Parsed.Query)
-	kindSelect := widget.NewSelect([]string{"Movie", "TV episode"}, nil)
-	if file.Parsed.Kind == media.Episode {
-		kindSelect.SetSelected("TV episode")
-	} else {
-		kindSelect.SetSelected("Movie")
-	}
-	yearEntry := widget.NewEntry()
-	yearEntry.SetText(optionalNumber(file.Parsed.Year))
-	seasonEntry := widget.NewEntry()
-	seasonEntry.SetText(optionalNumber(file.Parsed.Season))
-	episodeEntry := widget.NewEntry()
-	episodeEntry.SetText(optionalNumber(file.Parsed.Episode))
-	candidateSelect := widget.NewSelect(nil, nil)
-	message := widget.NewLabel("Edit the search values or choose a candidate.")
+	candidates := reviewCandidates(file.Candidates)
+	selected := -1
+	message := widget.NewLabel(fmt.Sprintf("Select the best match for %q.", file.Parsed.Query))
 	message.Wrapping = fyne.TextWrapWord
-	candidates := append([]media.Candidate(nil), file.Candidates...)
-
-	updateCandidates := func() {
-		labels := make([]string, len(candidates))
-		for index, candidate := range candidates {
+	candidateList := widget.NewList(
+		func() int { return len(candidates) },
+		func() fyne.CanvasObject {
+			poster := canvas.NewImageFromResource(theme.FileImageIcon())
+			poster.FillMode = canvas.ImageFillContain
+			poster.SetMinSize(fyne.NewSize(40, 60))
+			title := widget.NewLabel("")
+			title.TextStyle.Bold = true
+			overview := widget.NewLabel("")
+			return container.NewHBox(poster, container.NewVBox(title, overview))
+		},
+		func(id widget.ListItemID, object fyne.CanvasObject) {
+			candidate := candidates[id]
+			row := object.(*fyne.Container)
+			poster := canvas.NewImageFromResource(theme.FileImageIcon())
+			if candidate.PosterPath != "" {
+				poster = canvas.NewImageFromURI(storage.NewURI("https://image.tmdb.org/t/p/w154" + candidate.PosterPath))
+			}
+			poster.FillMode = canvas.ImageFillContain
+			poster.SetMinSize(fyne.NewSize(40, 60))
+			row.Objects[0] = poster
+			text := row.Objects[1].(*fyne.Container)
 			year := candidate.Year
 			if candidate.Kind == media.Episode {
 				year = candidate.SeriesYear
 			}
-			labels[index] = fmt.Sprintf("%s (%d) — TMDB %d", candidate.Title, year, candidate.ID)
-		}
-		candidateSelect.SetOptions(labels)
-		if len(labels) > 0 {
-			candidateSelect.SetSelectedIndex(0)
-		}
+			text.Objects[0].(*widget.Label).SetText(fmt.Sprintf("%s (%d)", candidate.Title, year))
+			text.Objects[1].(*widget.Label).SetText(truncate(candidate.Overview, 90))
+			row.Refresh()
+		},
+	)
+	candidateList.OnSelected = func(id widget.ListItemID) { selected = id }
+	if len(candidates) > 0 {
+		candidateList.Select(0)
+	} else {
+		message.SetText("No matches are available. Skip this file and run Match again after changing its filename or folder.")
 	}
-	updateCandidates()
-	invalidateCandidates := func(string) {
-		candidates = nil
-		candidateSelect.SetOptions(nil)
-		message.SetText("Search again after changing match fields.")
-	}
-	queryEntry.OnChanged = invalidateCandidates
-	yearEntry.OnChanged = invalidateCandidates
-	seasonEntry.OnChanged = invalidateCandidates
-	episodeEntry.OnChanged = invalidateCandidates
-	kindSelect.OnChanged = invalidateCandidates
 
+	reviewCtx, cancelReview := context.WithCancel(context.Background())
 	var reviewDialog dialog.Dialog
-	searchButton := widget.NewButton("Search TMDB", func() {
-		parsed, err := reviewParsed(kindSelect.Selected, queryEntry.Text, yearEntry.Text, seasonEntry.Text, episodeEntry.Text)
-		if err != nil {
-			message.SetText(err.Error())
-			return
-		}
-		message.SetText("Searching…")
-		go func() {
-			engine := matcher.New(application.tmdbClient(options.TMDBToken))
-			results, err := engine.Search(context.Background(), parsed, options)
-			fyne.Do(func() {
-				if err != nil {
-					message.SetText(err.Error())
-					return
-				}
-				candidates = results
-				updateCandidates()
-				if len(results) == 0 {
-					message.SetText("No TMDB results.")
-				} else {
-					message.SetText(fmt.Sprintf("%d candidate(s) found.", len(results)))
-				}
-			})
-		}()
-	})
-	applyButton := widget.NewButton("Use Selected Match", func() {
-		selected := candidateSelect.SelectedIndex()
+	selectButton := widget.NewButtonWithIcon("Select", theme.ConfirmIcon(), func() {
 		if selected < 0 || selected >= len(candidates) {
 			message.SetText("Choose a candidate first.")
 			return
 		}
-		parsed, err := reviewParsed(kindSelect.Selected, queryEntry.Text, yearEntry.Text, seasonEntry.Text, episodeEntry.Text)
-		if err != nil {
-			message.SetText(err.Error())
-			return
-		}
 		selectedCandidate := candidates[selected]
-		selectedCandidate.Kind = parsed.Kind
-		file.Parsed = parsed
+		input := append([]media.File(nil), application.files...)
+		indices := []int{index}
+		if file.Parsed.Kind == media.Episode {
+			indices = matcher.EpisodeGroupIndices(input, index)
+		}
 		message.SetText("Loading metadata…")
 		go func() {
 			engine := matcher.New(application.tmdbClient(options.TMDBToken))
-			resolved := engine.Resolve(context.Background(), file, selectedCandidate, options)
+			resolved := engine.ResolveGroup(reviewCtx, input, indices, selectedCandidate, options)
 			fyne.Do(func() {
-				if resolved.Status == media.Error {
-					message.SetText(resolved.Message)
+				if reviewCtx.Err() != nil {
 					return
 				}
-				if index < len(application.files) && application.files[index].Path == file.Path {
-					application.files[index] = resolved
+				for _, member := range indices {
+					if member >= len(application.files) || application.files[member].Path != input[member].Path {
+						return
+					}
+				}
+				for _, member := range indices {
+					application.files[member] = resolved[member]
 				}
 				reviewDialog.Hide()
-				application.setStatus("Match selected.")
+				application.setStatus(fmt.Sprintf("Match applied to %d file(s).", len(indices)))
 				application.refresh()
 			})
 		}()
 	})
+	setEnabled(selectButton, len(candidates) > 0)
+	buttons := []fyne.CanvasObject{selectButton}
+	hasExpectedEpisodes := file.IsEpisodePairing()
+	for _, candidate := range application.files {
+		hasExpectedEpisodes = hasExpectedEpisodes || candidate.IsExpectedEpisode()
+	}
+	if hasExpectedEpisodes {
+		pairButton := widget.NewButton("Expected Episodes…", func() {
+			reviewDialog.Hide()
+			application.reviewExpectedPairing(index)
+		})
+		buttons = append(buttons, pairButton)
+	}
+	content := container.NewBorder(message, container.NewCenter(container.NewHBox(buttons...)), nil, nil, candidateList)
+	title := "Select Movie"
+	if file.Parsed.Kind == media.Episode {
+		title = "Select TV Series"
+	}
+	reviewDialog = dialog.NewCustom(title, "Skip", content, application.window)
+	reviewDialog.SetOnClosed(cancelReview)
+	reviewDialog.Resize(fyne.NewSize(700, 500))
+	reviewDialog.Show()
+}
 
-	expectedIndices := make([]int, 0)
-	expectedLabels := make([]string, 0)
+func (application *Application) reviewExpectedPairing(index int) {
+	if index < 0 || index >= len(application.files) {
+		return
+	}
+	file := application.files[index]
+	var expectedIndices []int
+	var expectedLabels []string
 	for expectedIndex, expected := range application.files {
 		if expected.IsExpectedEpisode() {
 			expectedIndices = append(expectedIndices, expectedIndex)
@@ -951,7 +953,9 @@ func (application *Application) reviewSelected() {
 	if len(expectedLabels) > 0 {
 		expectedSelect.SetSelectedIndex(0)
 	}
-	pairButton := widget.NewButton("Pair Expected Episode", func() {
+	message := widget.NewLabel("Choose an expected episode to pair with this file.")
+	var pairingDialog dialog.Dialog
+	pairButton := widget.NewButton("Pair", func() {
 		selected := expectedSelect.SelectedIndex()
 		if selected < 0 || selected >= len(expectedIndices) {
 			message.SetText("Choose an expected episode first.")
@@ -961,42 +965,31 @@ func (application *Application) reviewSelected() {
 			message.SetText(err.Error())
 			return
 		}
-		reviewDialog.Hide()
+		pairingDialog.Hide()
 		application.selected = -1
 		application.setStatus("Expected episode paired.")
 		application.refresh()
 	})
 	setEnabled(pairButton, len(expectedLabels) > 0)
-	removePairButton := widget.NewButton("Remove Pairing", func() {
+	removeButton := widget.NewButton("Remove Pairing", func() {
 		if err := application.unpairExpected(index); err != nil {
 			message.SetText(err.Error())
 			return
 		}
-		reviewDialog.Hide()
+		pairingDialog.Hide()
 		application.selected = -1
 		application.setStatus("Pairing removed.")
 		application.refresh()
 	})
-	setEnabled(removePairButton, file.IsEpisodePairing())
-	pairing := container.NewVBox(
-		widget.NewSeparator(),
-		widget.NewLabelWithStyle("Expected episode pairing", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+	setEnabled(removeButton, file.IsEpisodePairing())
+	content := container.NewVBox(
+		message,
 		widget.NewForm(widget.NewFormItem("Expected episode", expectedSelect)),
-		container.NewHBox(pairButton, removePairButton),
+		container.NewCenter(container.NewHBox(pairButton, removeButton)),
 	)
-
-	form := widget.NewForm(
-		widget.NewFormItem("Type", kindSelect),
-		widget.NewFormItem("Search", queryEntry),
-		widget.NewFormItem("Year", yearEntry),
-		widget.NewFormItem("Season", seasonEntry),
-		widget.NewFormItem("Episode", episodeEntry),
-		widget.NewFormItem("Candidate", candidateSelect),
-	)
-	content := container.NewVBox(form, message, container.NewHBox(searchButton, applyButton), pairing)
-	reviewDialog = dialog.NewCustom("Review Match", "Close", content, application.window)
-	reviewDialog.Resize(fyne.NewSize(650, 430))
-	reviewDialog.Show()
+	pairingDialog = dialog.NewCustom("Expected Episode Pairing", "Cancel", content, application.window)
+	pairingDialog.Resize(fyne.NewSize(650, 220))
+	pairingDialog.Show()
 }
 
 func (application *Application) confirmRename() {
@@ -1257,6 +1250,22 @@ func reviewParsed(kind, query, year, season, episode string) (media.Parsed, erro
 		}
 	}
 	return parsed, nil
+}
+
+func reviewCandidates(candidates []media.Candidate) []media.Candidate {
+	limit := len(candidates)
+	if limit > 10 && candidates[0].Kind == media.Episode {
+		limit = 10
+	}
+	return append([]media.Candidate(nil), candidates[:limit]...)
+}
+
+func truncate(value string, limit int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return strings.TrimSpace(string(runes[:limit])) + "…"
 }
 
 func parseOptionalNumber(name, value string) (int, error) {

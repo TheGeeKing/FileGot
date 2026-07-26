@@ -29,17 +29,27 @@ func (matcher *Matcher) Match(ctx context.Context, input []media.File, options s
 	semaphore := make(chan struct{}, 4)
 	var wait sync.WaitGroup
 
-	tvGroups := make(map[string][]int)
+	var tvGroups [][]int
+	var movieIndices []int
+	grouped := make(map[int]bool)
 	for index := range files {
 		if files[index].Imported || files[index].Status == media.Unsupported {
 			continue
 		}
 		if files[index].Parsed.Kind == media.Episode {
-			key := normalize(files[index].Parsed.Query) + "/" + strconv.Itoa(files[index].Parsed.Year)
-			tvGroups[key] = append(tvGroups[key], index)
+			if !grouped[index] {
+				group := EpisodeGroupIndices(files, index)
+				tvGroups = append(tvGroups, group)
+				for _, member := range group {
+					grouped[member] = true
+				}
+			}
 			continue
 		}
+		movieIndices = append(movieIndices, index)
+	}
 
+	for _, index := range movieIndices {
 		wait.Add(1)
 		go func(index int) {
 			defer wait.Done()
@@ -58,88 +68,29 @@ func (matcher *Matcher) Match(ctx context.Context, input []media.File, options s
 		wait.Add(1)
 		go func(indices []int) {
 			defer wait.Done()
-			first := files[indices[0]].Parsed
-			var candidates []media.Candidate
-			var err error
-			withLimit(ctx, semaphore, func() {
-				candidates, err = matcher.Search(ctx, first, options)
-			})
-			if err != nil {
+			candidates, selected, matchedParsed, automatic, err := matcher.searchEpisodeGroup(ctx, files, indices, options, semaphore)
+			if automatic {
 				for _, index := range indices {
-					setError(&files[index], err)
-				}
-				return
-			}
-
-			selected, automatic := automaticCandidate(first, candidates)
-			if !automatic {
-				for _, index := range indices {
-					parsed := files[index].Parsed
-					fileCandidates := candidates
-					var fallbackSelected media.Candidate
-					var fallbackAutomatic bool
-					var fallbackErr error
-					seen := map[string]struct{}{
-						normalize(parsed.Query) + "/" + strconv.Itoa(parsed.Year): {},
-					}
-					for _, hint := range media.ParentHints(files[index].Path) {
-						fallback := parsed
-						fallback.Query = hint.Query
-						if hint.Year != 0 {
-							fallback.Year = hint.Year
-						}
-						key := normalize(fallback.Query) + "/" + strconv.Itoa(fallback.Year)
-						if _, duplicate := seen[key]; duplicate {
-							continue
-						}
-						seen[key] = struct{}{}
-						found, err := matcher.Search(ctx, fallback, options)
-						if err != nil {
-							fallbackErr = err
-							continue
-						}
-						fallbackErr = nil
-						if len(found) > 0 {
-							fileCandidates = found
-						}
-						if fallbackSelected, fallbackAutomatic = automaticCandidate(fallback, found); fallbackAutomatic {
-							files[index].Parsed.Query = fallback.Query
-							files[index].Parsed.Year = fallback.Year
-							files[index] = matcher.Resolve(ctx, files[index], fallbackSelected, options)
-							break
-						}
-					}
-					if fallbackAutomatic {
-						continue
-					}
-					if len(fileCandidates) == 0 && fallbackErr != nil {
-						setError(&files[index], fallbackErr)
-						continue
-					}
-					files[index].Candidates = fileCandidates
-					if len(fileCandidates) == 0 {
-						files[index].Status = media.Unmatched
-						files[index].Message = "no TMDB results"
-					} else {
-						files[index].Status = media.Review
-						files[index].Message = "choose a TMDB series"
-					}
-				}
-				return
-			}
-
-			var episodeWait sync.WaitGroup
-			for _, index := range indices {
-				index := index
-				episodeWait.Add(1)
-				go func() {
-					defer episodeWait.Done()
+					files[index].Parsed.Query = matchedParsed.Query
+					files[index].Parsed.Year = matchedParsed.Year
 					withLimit(ctx, semaphore, func() {
 						files[index] = matcher.Resolve(ctx, files[index], selected, options)
 					})
-				}()
+				}
+				return
 			}
-			episodeWait.Wait()
+			for _, index := range indices {
+				files[index].Candidates = candidates
+				if len(candidates) > 0 {
+					files[index].Status = media.Review
+					files[index].Message = "choose a TMDB series"
+				} else if err != nil {
+					setError(&files[index], err)
+				} else {
+					files[index].Status = media.Unmatched
+					files[index].Message = "no TMDB results"
+				}
+			}
 		}(indices)
 	}
 
@@ -159,6 +110,7 @@ func (matcher *Matcher) Search(ctx context.Context, parsed media.Parsed, options
 			candidates = append(candidates, media.Candidate{
 				ID: result.ID, Kind: media.Movie, Title: chooseTitle(result.Title, result.OriginalTitle, options.PreferOriginalTitle),
 				OriginalTitle: result.OriginalTitle, Year: dateYear(result.ReleaseDate),
+				PosterPath: result.PosterPath, Overview: result.Overview,
 			})
 		}
 		return candidates, nil
@@ -172,6 +124,7 @@ func (matcher *Matcher) Search(ctx context.Context, parsed media.Parsed, options
 			candidates = append(candidates, media.Candidate{
 				ID: result.ID, Kind: media.Episode, Title: chooseTitle(result.Name, result.OriginalName, options.PreferOriginalTitle),
 				OriginalTitle: result.OriginalName, SeriesYear: dateYear(result.FirstAirDate),
+				PosterPath: result.PosterPath, Overview: result.Overview,
 				Season: parsed.Season, Episode: parsed.Episode,
 			})
 		}
@@ -179,6 +132,133 @@ func (matcher *Matcher) Search(ctx context.Context, parsed media.Parsed, options
 	default:
 		return nil, fmt.Errorf("unsupported media kind %q", parsed.Kind)
 	}
+}
+
+func (matcher *Matcher) ResolveGroup(
+	ctx context.Context,
+	input []media.File,
+	indices []int,
+	candidate media.Candidate,
+	options settings.Settings,
+) []media.File {
+	files := append([]media.File(nil), input...)
+	for _, index := range indices {
+		if ctx.Err() != nil {
+			return input
+		}
+		files[index] = matcher.Resolve(ctx, files[index], candidate, options)
+	}
+	if ctx.Err() != nil {
+		return input
+	}
+	return files
+}
+
+func EpisodeGroupIndices(files []media.File, selected int) []int {
+	if selected < 0 || selected >= len(files) || files[selected].Parsed.Kind != media.Episode {
+		return nil
+	}
+	group := []int{selected}
+	seen := map[int]bool{selected: true}
+	keys := episodeKeys(files[selected])
+
+	// ponytail: O(n²) grouping is fine for review-sized batches; index keys if imports grow past thousands.
+	for changed := true; changed; {
+		changed = false
+		for index, file := range files {
+			if seen[index] || file.Imported || file.Status == media.Unsupported || file.Parsed.Kind != media.Episode {
+				continue
+			}
+			if !sharesKey(keys, episodeKeys(file)) {
+				continue
+			}
+			seen[index] = true
+			group = append(group, index)
+			for key := range episodeKeys(file) {
+				keys[key] = struct{}{}
+			}
+			changed = true
+		}
+	}
+	return group
+}
+
+func (matcher *Matcher) searchEpisodeGroup(
+	ctx context.Context,
+	files []media.File,
+	indices []int,
+	options settings.Settings,
+	semaphore chan struct{},
+) ([]media.Candidate, media.Candidate, media.Parsed, bool, error) {
+	seenQueries := make(map[string]struct{})
+	seenCandidates := make(map[int]struct{})
+	var candidates []media.Candidate
+	var lastErr error
+	for _, index := range indices {
+		hints := append(media.ParentHints(files[index].Path), files[index].Parsed)
+		for _, parsed := range hints {
+			parsed.Kind = media.Episode
+			parsed.Season = files[index].Parsed.Season
+			parsed.Episode = files[index].Parsed.Episode
+			key := parsedKey(parsed)
+			if key == "" {
+				continue
+			}
+			if _, seen := seenQueries[key]; seen {
+				continue
+			}
+			seenQueries[key] = struct{}{}
+			var found []media.Candidate
+			withLimit(ctx, semaphore, func() {
+				found, lastErr = matcher.Search(ctx, parsed, options)
+			})
+			if lastErr != nil {
+				continue
+			}
+			if selected, automatic := automaticCandidate(parsed, found); automatic {
+				return found, selected, parsed, true, nil
+			}
+			for _, candidate := range found {
+				if _, seen := seenCandidates[candidate.ID]; !seen {
+					seenCandidates[candidate.ID] = struct{}{}
+					candidates = append(candidates, candidate)
+				}
+			}
+		}
+	}
+	return candidates, media.Candidate{}, media.Parsed{}, false, lastErr
+}
+
+func episodeKeys(file media.File) map[string]struct{} {
+	keys := make(map[string]struct{})
+	if key := parsedKey(file.Parsed); key != "" {
+		keys[key] = struct{}{}
+	}
+	hints := media.ParentHints(file.Path)
+	if len(hints) > 0 {
+		hint := hints[0]
+		if key := parsedKey(hint); key != "" {
+			keys[key] = struct{}{}
+		}
+	}
+	return keys
+}
+
+func parsedKey(parsed media.Parsed) string {
+	query := normalize(parsed.Query)
+	if query == "" {
+		return ""
+	}
+	return query + "/" + strconv.Itoa(parsed.Year)
+}
+
+func sharesKey(left, right map[string]struct{}) bool {
+	for key := range left {
+		if _, found := right[key]; found {
+			return true
+		}
+	}
+	return false
 }
 
 func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate media.Candidate, options settings.Settings) media.File {

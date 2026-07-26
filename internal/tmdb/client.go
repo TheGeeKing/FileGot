@@ -30,6 +30,8 @@ type Movie struct {
 	Title         string `json:"title"`
 	OriginalTitle string `json:"original_title"`
 	ReleaseDate   string `json:"release_date"`
+	PosterPath    string `json:"poster_path"`
+	Overview      string `json:"overview"`
 }
 
 type Show struct {
@@ -37,6 +39,8 @@ type Show struct {
 	Name         string `json:"name"`
 	OriginalName string `json:"original_name"`
 	FirstAirDate string `json:"first_air_date"`
+	PosterPath   string `json:"poster_path"`
+	Overview     string `json:"overview"`
 }
 
 type Season struct {

@@ -33,6 +33,8 @@ type Candidate struct {
 	Kind          Kind
 	Title         string
 	OriginalTitle string
+	PosterPath    string
+	Overview      string
 	Year          int
 	SeriesYear    int
 	Season        int
