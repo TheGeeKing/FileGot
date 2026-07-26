@@ -287,6 +287,7 @@ func (entry *advancedTemplateEntry) acceptCompletion(index int) {
 	entry.SetText(string(updated))
 	entry.CursorRow = 0
 	entry.CursorColumn = cursor
+	entry.Refresh()
 	entry.accepting = false
 	entry.dismissed = false
 	entry.refreshAssist()

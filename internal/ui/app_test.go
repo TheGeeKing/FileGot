@@ -690,6 +690,43 @@ func TestAdvancedTemplateEntryAcceptsFocusedCanvasTyping(t *testing.T) {
 	}
 }
 
+func TestAdvancedTemplateEntryMouseCompletionPlacesCursor(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	window := app.NewWindow("Advanced template")
+	entry := newAdvancedTemplateEntry(media.Movie, func() bool { return true })
+	window.SetContent(entry)
+	window.Show()
+	t.Cleanup(window.Close)
+
+	var cursorMoves []int
+	entry.Entry.OnCursorChanged = func() {
+		cursorMoves = append(cursorMoves, entry.CursorTextOffset())
+		entry.cursorChanged()
+	}
+	test.Type(entry, "{n.acr")
+	cursorMoves = nil
+	test.Tap(entry.completionButtons[0])
+	if entry.Text != "{n.acronym()" || entry.CursorTextOffset() != len([]rune("{n.acronym()")) {
+		t.Fatalf("no-argument completion = %q at %d", entry.Text, entry.CursorTextOffset())
+	}
+	if len(cursorMoves) == 0 || cursorMoves[len(cursorMoves)-1] != entry.CursorTextOffset() {
+		t.Fatalf("rendered cursor did not move to accepted no-argument completion: %v", cursorMoves)
+	}
+
+	entry.SetText("{n.aft")
+	entry.CursorColumn = len([]rune(entry.Text))
+	entry.refreshAssist()
+	cursorMoves = nil
+	test.Tap(entry.completionButtons[0])
+	if entry.Text != "{n.after()" || entry.CursorTextOffset() != len([]rune("{n.after(")) {
+		t.Fatalf("argument completion = %q at %d", entry.Text, entry.CursorTextOffset())
+	}
+	if len(cursorMoves) == 0 || cursorMoves[len(cursorMoves)-1] != entry.CursorTextOffset() {
+		t.Fatalf("rendered cursor did not move inside accepted argument completion: %v", cursorMoves)
+	}
+}
+
 func TestAdvancedTemplateEntryFiltersAndTracksSignatureParameters(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)

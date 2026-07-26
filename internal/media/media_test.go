@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -227,6 +228,9 @@ func TestValidateAdvancedTemplate(t *testing.T) {
 	if err := ValidateAdvancedPattern(Movie, valid); err != nil {
 		t.Fatalf("valid template rejected: %v", err)
 	}
+	if err := ValidateAdvancedPattern(Movie, `{y.replace('2', '3')}`); err != nil {
+		t.Fatalf("valid integer replacement rejected: %v", err)
+	}
 
 	invalid := []string{
 		`{{range .Title}}{{.}}{{end}}`,
@@ -235,6 +239,7 @@ func TestValidateAdvancedTemplate(t *testing.T) {
 		`{n.unknown()}`,
 		`{n.lower('extra')}`,
 		`{n.replace('one')}`,
+		`{y.acronym()}`,
 		`{y == 2024 ? n : n.removeAll(/[invalid/)}`,
 		`{n; env('HOME')}`,
 		`{n`,
@@ -307,6 +312,11 @@ func TestAdvancedTemplateCompletions(t *testing.T) {
 			want: AdvancedTemplateMethods(), replacement: [2]int{3, 3},
 		},
 		{
+			name: "integer methods", kind: Movie, pattern: "{y.", cursor: 3,
+			want:        []string{"default", "pad", "removeAll", "replace", "replaceAll", "roman"},
+			replacement: [2]int{3, 3},
+		},
+		{
 			name: "chained method prefix", kind: Movie, pattern: `{n.space('.').re`, cursor: 16,
 			want: []string{"removeAll", "replace", "replaceAll"}, replacement: [2]int{14, 16},
 		},
@@ -346,6 +356,13 @@ func TestAdvancedTemplateCompletions(t *testing.T) {
 			if !slices.Equal(names, test.want) {
 				t.Fatalf("completions = %v, want %v", names, test.want)
 			}
+			if test.name == "integer methods" {
+				for _, completion := range got {
+					if !strings.HasPrefix(completion.Syntax, "{y.") {
+						t.Fatalf("integer completion example = %q, want y receiver", completion.Syntax)
+					}
+				}
+			}
 		})
 	}
 }
@@ -376,6 +393,10 @@ func TestAdvancedTemplateSignatureHelp(t *testing.T) {
 			method: "replace", parameter: 0,
 		},
 		{
+			name: "integer receiver", kind: Movie, pattern: `{y.replace(`, cursor: 11,
+			method: "replace", parameter: 0,
+		},
+		{
 			name: "cursor inside string", kind: Movie, pattern: `{n.replace('old', 'new')}`, cursor: 22,
 			method: "replace", parameter: 1,
 		},
@@ -383,6 +404,7 @@ func TestAdvancedTemplateSignatureHelp(t *testing.T) {
 		{name: "grouping parentheses", kind: Movie, pattern: `{(n != "")`, cursor: 10},
 		{name: "unavailable receiver", kind: Movie, pattern: `{t.replace(`, cursor: 11},
 		{name: "unknown receiver", kind: Movie, pattern: `{bogus.replace(`, cursor: 15},
+		{name: "incompatible receiver", kind: Movie, pattern: `{y.acronym(`, cursor: 11},
 		{name: "too many arguments", kind: Movie, pattern: `{n.replace('a', 'b', `, cursor: 21},
 	}
 

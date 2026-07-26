@@ -229,9 +229,10 @@ var advancedTemplateExpressions = []AdvancedTemplateSyntax{
 
 type fileBotMethod struct {
 	AdvancedTemplateSyntax
-	function      any
-	regexArgument bool
-	allowsMissing bool
+	function        any
+	regexArgument   bool
+	allowsMissing   bool
+	integerReceiver bool
 }
 
 var fileBotMethods = []fileBotMethod{
@@ -287,7 +288,8 @@ var fileBotMethods = []fileBotMethod{
 				{Name: "fallback", Type: AdvancedTemplateString, Required: true, Description: "Value used when the binding is unavailable."},
 			},
 		},
-		function: func(fallback, value string) string { return firstNonEmpty(value, fallback) }, allowsMissing: true,
+		function:      func(fallback, value string) string { return firstNonEmpty(value, fallback) },
+		allowsMissing: true, integerReceiver: true,
 	},
 	{
 		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
@@ -319,7 +321,7 @@ var fileBotMethods = []fileBotMethod{
 				{Name: "padding", Type: AdvancedTemplateString, Description: `Text used for padding; defaults to "0".`},
 			},
 		},
-		function: pad,
+		function: pad, integerReceiver: true,
 	},
 	{
 		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
@@ -329,7 +331,7 @@ var fileBotMethods = []fileBotMethod{
 				{Name: "pattern", Type: AdvancedTemplateRegularExpression, Required: true, Description: "RE2 pattern to remove."},
 			},
 		},
-		function: removeAll, regexArgument: true,
+		function: removeAll, regexArgument: true, integerReceiver: true,
 	},
 	{
 		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
@@ -340,7 +342,8 @@ var fileBotMethods = []fileBotMethod{
 				{Name: "new", Type: AdvancedTemplateString, Required: true, Description: "Replacement text."},
 			},
 		},
-		function: func(old, new, value string) string { return strings.ReplaceAll(value, old, new) },
+		function:        func(old, new, value string) string { return strings.ReplaceAll(value, old, new) },
+		integerReceiver: true,
 	},
 	{
 		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
@@ -351,14 +354,14 @@ var fileBotMethods = []fileBotMethod{
 				{Name: "replacement", Type: AdvancedTemplateString, Required: true, Description: "Replacement text."},
 			},
 		},
-		function: replaceAll, regexArgument: true,
+		function: replaceAll, regexArgument: true, integerReceiver: true,
 	},
 	{
 		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
 			Name: "roman", Syntax: `{n.roman()}`, Description: "Convert standalone numbers from 1 through 12",
 			Example: "Episode IV", ReturnType: "String",
 		},
-		function: roman,
+		function: roman, integerReceiver: true,
 	},
 	{
 		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
@@ -460,7 +463,7 @@ func AdvancedTemplateCompletions(kind Kind, pattern string, cursor int) []Advanc
 			string(prefix),
 			start+1+prefixStart,
 			advancedIdentifierEnd(runes, cursor),
-			false,
+			"",
 		)
 	}
 
@@ -477,15 +480,16 @@ func AdvancedTemplateCompletions(kind Kind, pattern string, cursor int) []Advanc
 	if err != nil {
 		return nil
 	}
-	if _, _, _, _, err := compileFileBotNode(kind, node); err != nil {
+	_, _, _, receiverType, _, err := compileFileBotNode(kind, node)
+	if err != nil {
 		return nil
 	}
 	return advancedCompletions(
-		fileBotMethodSyntax(),
+		fileBotMethodSyntax(receiverType),
 		string(expression[dot+1:]),
 		start+1+dot+1,
 		advancedIdentifierEnd(runes, cursor),
-		true,
+		base,
 	)
 }
 
@@ -573,7 +577,8 @@ func AdvancedTemplateSignatureHelp(kind Kind, pattern string, cursor int) *Advan
 		}
 		tooManyArguments := len(method.Parameters) == 0 && calls[index].commas > 0 ||
 			len(method.Parameters) > 0 && calls[index].commas >= len(method.Parameters)
-		if !advancedReceiverAllowed(kind, calls[index].receiver) || tooManyArguments {
+		receiverType, ok := advancedReceiverType(kind, calls[index].receiver)
+		if !ok || !method.acceptsReceiver(receiverType) || tooManyArguments {
 			return nil
 		}
 		active := calls[index].commas
@@ -648,17 +653,20 @@ func advancedMethodBefore(expression []rune, opening int) (string, string) {
 	return string(expression[start:end]), strings.TrimSpace(string(expression[:dot-1]))
 }
 
-func advancedReceiverAllowed(kind Kind, receiver string) bool {
+func advancedReceiverType(kind Kind, receiver string) (string, bool) {
 	normalized, err := normalizeFileBotExpression(receiver)
 	if err != nil {
-		return false
+		return "", false
 	}
 	node, err := parser.ParseExpr(normalized)
 	if err != nil {
-		return false
+		return "", false
 	}
-	_, _, _, _, err = compileFileBotNode(kind, node)
-	return err == nil
+	_, _, _, receiverType, _, err := compileFileBotNode(kind, node)
+	if err != nil {
+		return "", false
+	}
+	return receiverType, true
 }
 
 func advancedIdentifier(value []rune) bool {
@@ -685,7 +693,7 @@ func advancedCompletions(
 	syntax []AdvancedTemplateSyntax,
 	prefix string,
 	start, end int,
-	method bool,
+	receiver string,
 ) []AdvancedTemplateCompletion {
 	var completions []AdvancedTemplateCompletion
 	for _, item := range syntax {
@@ -694,10 +702,13 @@ func advancedCompletions(
 		}
 		insert := item.Name
 		cursorBack := 0
-		if method {
+		if receiver != "" {
 			insert += "()"
 			if len(item.Parameters) > 0 {
 				cursorBack = 1
+			}
+			if dot := strings.Index(item.Syntax, "."); dot >= 0 {
+				item.Syntax = "{" + receiver + item.Syntax[dot:]
 			}
 		}
 		completions = append(completions, AdvancedTemplateCompletion{
@@ -720,10 +731,12 @@ func fileBotBindingSyntax(kind Kind) []AdvancedTemplateSyntax {
 	return syntax
 }
 
-func fileBotMethodSyntax() []AdvancedTemplateSyntax {
-	syntax := make([]AdvancedTemplateSyntax, len(fileBotMethods))
-	for index, method := range fileBotMethods {
-		syntax[index] = method.AdvancedTemplateSyntax
+func fileBotMethodSyntax(receiverType string) []AdvancedTemplateSyntax {
+	var syntax []AdvancedTemplateSyntax
+	for _, method := range fileBotMethods {
+		if method.acceptsReceiver(receiverType) {
+			syntax = append(syntax, method.AdvancedTemplateSyntax)
+		}
 	}
 	return syntax
 }
@@ -744,6 +757,10 @@ func fileBotMethodByName(name string) (fileBotMethod, bool) {
 		}
 	}
 	return fileBotMethod{}, false
+}
+
+func (method fileBotMethod) acceptsReceiver(receiverType string) bool {
+	return receiverType == "String" || receiverType == "Integer" && method.integerReceiver
 }
 
 func ValidateAdvancedPattern(kind Kind, pattern string) error {
@@ -901,7 +918,7 @@ func compileFileBotExpression(kind Kind, expression string) (string, error) {
 			return compileFileBotConditional(kind, call.Args)
 		}
 	}
-	field, binding, pipeline, allowsMissing, err := compileFileBotNode(kind, node)
+	field, binding, pipeline, _, allowsMissing, err := compileFileBotNode(kind, node)
 	if err != nil {
 		return "", err
 	}
@@ -1085,28 +1102,28 @@ func readFileBotDelimited(value string, start int, delimiter byte) (string, int,
 	return "", 0, fmt.Errorf("unclosed literal")
 }
 
-func compileFileBotNode(kind Kind, node ast.Expr) (string, string, string, bool, error) {
+func compileFileBotNode(kind Kind, node ast.Expr) (string, string, string, string, bool, error) {
 	switch current := node.(type) {
 	case *ast.Ident:
 		binding, ok := fileBotBindingByName(kind, current.Name)
 		if !ok {
-			return "", "", "", false, fmt.Errorf("binding %s is not available for %s names", current.Name, kind)
+			return "", "", "", "", false, fmt.Errorf("binding %s is not available for %s names", current.Name, kind)
 		}
-		return binding.field, current.Name, "", false, nil
+		return binding.field, current.Name, "", binding.ReturnType, false, nil
 	case *ast.CallExpr:
 		selector, ok := current.Fun.(*ast.SelectorExpr)
 		if !ok {
-			return "", "", "", false, fmt.Errorf("only binding methods are allowed")
+			return "", "", "", "", false, fmt.Errorf("only binding methods are allowed")
 		}
-		field, binding, pipeline, allowsMissing, err := compileFileBotNode(kind, selector.X)
+		field, binding, pipeline, receiverType, allowsMissing, err := compileFileBotNode(kind, selector.X)
 		if err != nil {
-			return "", "", "", false, err
+			return "", "", "", "", false, err
 		}
 		arguments := make([]fileBotArgument, 0, len(current.Args))
 		for _, argument := range current.Args {
 			value, err := compileFileBotArgument(argument)
 			if err != nil {
-				return "", "", "", false, err
+				return "", "", "", "", false, err
 			}
 			arguments = append(arguments, value)
 		}
@@ -1114,11 +1131,17 @@ func compileFileBotNode(kind Kind, node ast.Expr) (string, string, string, bool,
 		if method == "_default" {
 			method = "default"
 		}
+		definition, ok := fileBotMethodByName(method)
+		if !ok {
+			return "", "", "", "", false, fmt.Errorf("method %s is not allowed", method)
+		}
+		if !definition.acceptsReceiver(receiverType) {
+			return "", "", "", "", false, fmt.Errorf("%s is not available for %s values", method, receiverType)
+		}
 		step, err := compileFileBotMethod(method, arguments)
-		definition, _ := fileBotMethodByName(method)
-		return field, binding, pipeline + step, allowsMissing || definition.allowsMissing, err
+		return field, binding, pipeline + step, definition.ReturnType, allowsMissing || definition.allowsMissing, err
 	default:
-		return "", "", "", false, fmt.Errorf("unsupported expression")
+		return "", "", "", "", false, fmt.Errorf("unsupported expression")
 	}
 }
 
@@ -1146,7 +1169,7 @@ func compileFileBotCondition(kind Kind, node ast.Expr) (string, error) {
 	case *ast.ParenExpr:
 		return compileFileBotCondition(kind, current.X)
 	case *ast.Ident, *ast.CallExpr:
-		field, _, pipeline, _, err := compileFileBotNode(kind, current)
+		field, _, pipeline, _, _, err := compileFileBotNode(kind, current)
 		if err != nil {
 			return "", err
 		}
@@ -1193,7 +1216,7 @@ func compileFileBotResult(kind Kind, node ast.Expr) (string, error) {
 		}
 		return compileInterpolation(kind, value)
 	}
-	field, binding, pipeline, allowsMissing, err := compileFileBotNode(kind, node)
+	field, binding, pipeline, _, allowsMissing, err := compileFileBotNode(kind, node)
 	if err != nil {
 		return "", fmt.Errorf("conditional results must be strings or binding expressions")
 	}
