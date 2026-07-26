@@ -18,6 +18,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	value.Language = "fr-FR"
 	value.MoviePattern = "{title}.{year}"
 	value.IncludeSpecials = false
+	value.SortMatchedByStatus = true
 	if err := store.Save(value); err != nil {
 		t.Fatal(err)
 	}

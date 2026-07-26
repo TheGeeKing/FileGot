@@ -210,6 +210,21 @@ func TestTableColumnsSort(t *testing.T) {
 	}
 }
 
+func TestSortMatchedFilesByStatus(t *testing.T) {
+	files := []media.File{
+		{Path: "same.mkv", Status: media.Ready, Proposed: "same.mkv"},
+		{Path: "ready.mkv", Status: media.Ready, Proposed: "renamed.mkv"},
+		{Path: "review.mkv", Status: media.Review},
+		{Path: "unmatched.mkv", Status: media.Unmatched},
+	}
+
+	sortMatchedFiles(files)
+	got := []string{files[0].Path, files[1].Path, files[2].Path, files[3].Path}
+	if !slices.Equal(got, []string{"unmatched.mkv", "review.mkv", "ready.mkv", "same.mkv"}) {
+		t.Fatalf("matched file order = %v", got)
+	}
+}
+
 func TestFileSelectionTransitions(t *testing.T) {
 	application := &Application{selected: -1, selectionAnchor: -1}
 

@@ -40,6 +40,7 @@ type Settings struct {
 	IncludeSpecials     bool
 	ConfirmRename       bool
 	IgnoreHidden        bool
+	SortMatchedByStatus bool
 }
 
 type Store struct {
@@ -106,6 +107,7 @@ func (store *Store) Load() Settings {
 		IncludeSpecials:     prefs.BoolWithFallback("behavior.include_specials", defaults.IncludeSpecials),
 		ConfirmRename:       prefs.BoolWithFallback("behavior.confirm_rename", defaults.ConfirmRename),
 		IgnoreHidden:        prefs.BoolWithFallback("behavior.ignore_hidden", defaults.IgnoreHidden),
+		SortMatchedByStatus: prefs.BoolWithFallback("behavior.sort_matched_by_status", defaults.SortMatchedByStatus),
 	}
 }
 
@@ -151,6 +153,7 @@ func (store *Store) Save(value Settings) error {
 	prefs.SetBool("behavior.include_specials", value.IncludeSpecials)
 	prefs.SetBool("behavior.confirm_rename", value.ConfirmRename)
 	prefs.SetBool("behavior.ignore_hidden", value.IgnoreHidden)
+	prefs.SetBool("behavior.sort_matched_by_status", value.SortMatchedByStatus)
 	return nil
 }
 

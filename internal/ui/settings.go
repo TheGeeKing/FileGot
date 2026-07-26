@@ -156,6 +156,8 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	confirmRename.SetChecked(current.ConfirmRename)
 	ignoreHidden := widget.NewCheck("Ignore hidden files and folders", nil)
 	ignoreHidden.SetChecked(current.IgnoreHidden)
+	sortMatchedByStatus := widget.NewCheck("Sort matched files by status", nil)
+	sortMatchedByStatus.SetChecked(current.SortMatchedByStatus)
 
 	validation := widget.NewLabel("")
 	validation.Wrapping = fyne.TextWrapWord
@@ -172,6 +174,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 			ScanSubfolders: scanSubfolders.Checked, AutoMatch: autoMatch.Checked,
 			IncludeSpecials: includeSpecials.Checked,
 			ConfirmRename:   confirmRename.Checked, IgnoreHidden: ignoreHidden.Checked,
+			SortMatchedByStatus: sortMatchedByStatus.Checked,
 		}
 	}
 
@@ -267,6 +270,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	includeSpecials.OnChanged = func(bool) { refreshValidation() }
 	confirmRename.OnChanged = func(bool) { refreshValidation() }
 	ignoreHidden.OnChanged = func(bool) { refreshValidation() }
+	sortMatchedByStatus.OnChanged = func(bool) { refreshValidation() }
 
 	testButton := widget.NewButton("Test Connection", nil)
 	testButton.OnTapped = func() {
@@ -323,6 +327,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		includeSpecials,
 		confirmRename,
 		ignoreHidden,
+		sortMatchedByStatus,
 	))
 
 	saveButton.OnTapped = func() {
@@ -356,6 +361,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		includeSpecials.SetChecked(defaults.IncludeSpecials)
 		confirmRename.SetChecked(defaults.ConfirmRename)
 		ignoreHidden.SetChecked(defaults.IgnoreHidden)
+		sortMatchedByStatus.SetChecked(defaults.SortMatchedByStatus)
 		presetSelect.SetSelected(settings.PresetClean)
 		refreshNamingReferences()
 		refreshValidation()

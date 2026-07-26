@@ -868,6 +868,10 @@ func (application *Application) startMatch() {
 			if ctx.Err() != nil {
 				application.setStatus("Matching cancelled.")
 			} else {
+				if options.SortMatchedByStatus {
+					sortMatchedFiles(results)
+					application.clearSelection()
+				}
 				application.files = results
 				application.setStatus(matchSummary(results))
 			}
@@ -1366,6 +1370,28 @@ func rowStatus(file media.File) media.Status {
 		return media.Unsupported
 	}
 	return file.Status
+}
+
+func sortMatchedFiles(files []media.File) {
+	sort.SliceStable(files, func(left, right int) bool {
+		return matchedFileRank(files[left]) < matchedFileRank(files[right])
+	})
+}
+
+func matchedFileRank(file media.File) int {
+	if unchanged(file) {
+		return 3
+	}
+	switch file.Status {
+	case media.Unmatched:
+		return 0
+	case media.Review:
+		return 1
+	case media.Ready:
+		return 2
+	default:
+		return 4
+	}
 }
 
 func reviewParsed(kind, query, year, season, episode string) (media.Parsed, error) {
