@@ -925,7 +925,7 @@ func (application *Application) reviewSelected() {
 	if len(candidates) > 0 {
 		candidateList.Select(0)
 	} else {
-		message.SetText("No matches are available. Skip this file and run Match again after changing its filename or folder.")
+		message.SetText("No matches are available. Search TMDB below.")
 	}
 
 	reviewCtx, cancelReview := context.WithCancel(context.Background())
@@ -938,7 +938,7 @@ func (application *Application) reviewSelected() {
 		selectedCandidate := candidates[selected]
 		input := append([]media.File(nil), application.files...)
 		indices := []int{index}
-		if file.Parsed.Kind == media.Episode {
+		if selectedCandidate.Kind == media.Episode && file.Parsed.Kind == media.Episode {
 			indices = matcher.EpisodeGroupIndices(input, index)
 		}
 		message.SetText("Loading metadata…")
@@ -976,7 +976,80 @@ func (application *Application) reviewSelected() {
 		})
 		buttons = append(buttons, pairButton)
 	}
-	content := container.NewBorder(message, container.NewCenter(container.NewHBox(buttons...)), nil, nil, candidateList)
+	top := fyne.CanvasObject(message)
+	if len(candidates) == 0 {
+		titleEntry := widget.NewEntry()
+		titleEntry.SetText(file.Parsed.Query)
+		yearEntry := widget.NewEntry()
+		yearEntry.SetText(optionalNumber(file.Parsed.Year))
+		idEntry := widget.NewEntry()
+		idEntry.SetPlaceHolder("Optional")
+		kindSelect := widget.NewSelect([]string{"Movie", "TV series"}, nil)
+		kindSelect.SetSelected("Movie")
+		if file.Parsed.Kind == media.Episode {
+			kindSelect.SetSelected("TV series")
+		}
+		var searchControls *fyne.Container
+		searchButton := widget.NewButtonWithIcon("Search", theme.SearchIcon(), nil)
+		searchButton.OnTapped = func() {
+			parsed, tmdbID, err := manualSearchParsed(
+				titleEntry.Text, yearEntry.Text, kindSelect.Selected, idEntry.Text, file.Parsed,
+			)
+			if err != nil {
+				message.SetText(err.Error())
+				return
+			}
+			setEnabled(searchButton, false)
+			message.SetText("Searching TMDB…")
+			go func() {
+				engine := matcher.New(application.tmdbClient(options.TMDBToken))
+				var found []media.Candidate
+				if tmdbID > 0 {
+					candidate, lookupErr := engine.Lookup(reviewCtx, parsed, tmdbID, options)
+					err = lookupErr
+					if err == nil {
+						found = []media.Candidate{candidate}
+					}
+				} else {
+					found, err = engine.Search(reviewCtx, parsed, options)
+				}
+				fyne.Do(func() {
+					if reviewCtx.Err() != nil {
+						return
+					}
+					setEnabled(searchButton, true)
+					if err != nil {
+						message.SetText("Search failed: " + err.Error())
+						return
+					}
+					candidates = reviewCandidates(found)
+					selected = -1
+					candidateList.UnselectAll()
+					candidateList.Refresh()
+					setEnabled(selectButton, len(candidates) > 0)
+					if len(candidates) == 0 {
+						message.SetText("No matches found. Try another title, year, or type.")
+						return
+					}
+					searchControls.Hide()
+					message.SetText(fmt.Sprintf("Found %d match(es). Choose one below.", len(candidates)))
+					candidateList.Select(0)
+				})
+			}()
+		}
+		searchControls = container.NewVBox(
+			widget.NewForm(widget.NewFormItem("Title", titleEntry)),
+			container.NewGridWithColumns(
+				3,
+				container.NewVBox(widget.NewLabel("Year"), yearEntry),
+				container.NewVBox(widget.NewLabel("Type"), kindSelect),
+				container.NewVBox(widget.NewLabel("TMDB ID"), idEntry),
+			),
+			container.NewCenter(searchButton),
+		)
+		top = container.NewVBox(message, searchControls)
+	}
+	content := container.NewBorder(top, container.NewCenter(container.NewHBox(buttons...)), nil, nil, candidateList)
 	title := "Select Movie"
 	if file.Parsed.Kind == media.Episode {
 		title = "Select TV Series"
@@ -1316,6 +1389,35 @@ func reviewParsed(kind, query, year, season, episode string) (media.Parsed, erro
 		}
 	}
 	return parsed, nil
+}
+
+func manualSearchParsed(title, year, kind, id string, original media.Parsed) (media.Parsed, int, error) {
+	parsed := media.Parsed{Query: strings.TrimSpace(title)}
+	switch kind {
+	case "Movie":
+		parsed.Kind = media.Movie
+	case "TV series":
+		parsed.Kind = media.Episode
+		parsed.Season = original.Season
+		parsed.Episode = original.Episode
+	default:
+		return parsed, 0, fmt.Errorf("type is required")
+	}
+	tmdbID := 0
+	var err error
+	if strings.TrimSpace(id) != "" {
+		if tmdbID, err = parseRequiredNumber("TMDB ID", id); err != nil || tmdbID == 0 {
+			return parsed, 0, fmt.Errorf("TMDB ID must be a positive number")
+		}
+		return parsed, tmdbID, nil
+	}
+	if parsed.Query == "" {
+		return parsed, 0, fmt.Errorf("title is required")
+	}
+	if parsed.Year, err = parseOptionalNumber("year", year); err != nil {
+		return parsed, 0, err
+	}
+	return parsed, 0, nil
 }
 
 func reviewCandidates(candidates []media.Candidate) []media.Candidate {

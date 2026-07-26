@@ -107,11 +107,7 @@ func (matcher *Matcher) Search(ctx context.Context, parsed media.Parsed, options
 		}
 		candidates := make([]media.Candidate, 0, len(results))
 		for _, result := range results {
-			candidates = append(candidates, media.Candidate{
-				ID: result.ID, Kind: media.Movie, Title: chooseTitle(result.Title, result.OriginalTitle, options.PreferOriginalTitle),
-				OriginalTitle: result.OriginalTitle, Year: dateYear(result.ReleaseDate),
-				PosterPath: result.PosterPath, Overview: result.Overview,
-			})
+			candidates = append(candidates, movieCandidate(result, options))
 		}
 		return candidates, nil
 	case media.Episode:
@@ -121,16 +117,46 @@ func (matcher *Matcher) Search(ctx context.Context, parsed media.Parsed, options
 		}
 		candidates := make([]media.Candidate, 0, len(results))
 		for _, result := range results {
-			candidates = append(candidates, media.Candidate{
-				ID: result.ID, Kind: media.Episode, Title: chooseTitle(result.Name, result.OriginalName, options.PreferOriginalTitle),
-				OriginalTitle: result.OriginalName, SeriesYear: dateYear(result.FirstAirDate),
-				PosterPath: result.PosterPath, Overview: result.Overview,
-				Season: parsed.Season, Episode: parsed.Episode,
-			})
+			candidates = append(candidates, showCandidate(result, parsed, options))
 		}
 		return candidates, nil
 	default:
 		return nil, fmt.Errorf("unsupported media kind %q", parsed.Kind)
+	}
+}
+
+func (matcher *Matcher) Lookup(
+	ctx context.Context,
+	parsed media.Parsed,
+	id int,
+	options settings.Settings,
+) (media.Candidate, error) {
+	switch parsed.Kind {
+	case media.Movie:
+		result, err := matcher.client.MovieDetails(ctx, id, options.Language)
+		return movieCandidate(result, options), err
+	case media.Episode:
+		result, err := matcher.client.ShowDetails(ctx, id, options.Language)
+		return showCandidate(result, parsed, options), err
+	default:
+		return media.Candidate{}, fmt.Errorf("unsupported media kind %q", parsed.Kind)
+	}
+}
+
+func movieCandidate(result tmdb.Movie, options settings.Settings) media.Candidate {
+	return media.Candidate{
+		ID: result.ID, Kind: media.Movie, Title: chooseTitle(result.Title, result.OriginalTitle, options.PreferOriginalTitle),
+		OriginalTitle: result.OriginalTitle, Year: dateYear(result.ReleaseDate),
+		PosterPath: result.PosterPath, Overview: result.Overview,
+	}
+}
+
+func showCandidate(result tmdb.Show, parsed media.Parsed, options settings.Settings) media.Candidate {
+	return media.Candidate{
+		ID: result.ID, Kind: media.Episode, Title: chooseTitle(result.Name, result.OriginalName, options.PreferOriginalTitle),
+		OriginalTitle: result.OriginalName, SeriesYear: dateYear(result.FirstAirDate),
+		PosterPath: result.PosterPath, Overview: result.Overview,
+		Season: parsed.Season, Episode: parsed.Episode,
 	}
 }
 

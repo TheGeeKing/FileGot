@@ -119,6 +119,18 @@ func (client *Client) SearchTV(ctx context.Context, query string, year int, lang
 	return response.Results, nil
 }
 
+func (client *Client) MovieDetails(ctx context.Context, id int, language string) (Movie, error) {
+	var movie Movie
+	err := client.get(ctx, fmt.Sprintf("/movie/%d", id), url.Values{"language": {language}}, &movie)
+	return movie, err
+}
+
+func (client *Client) ShowDetails(ctx context.Context, id int, language string) (Show, error) {
+	var show Show
+	err := client.get(ctx, fmt.Sprintf("/tv/%d", id), url.Values{"language": {language}}, &show)
+	return show, err
+}
+
 func (client *Client) ShowSeasons(ctx context.Context, seriesID int, language string) ([]Season, error) {
 	var response struct {
 		Seasons []Season `json:"seasons"`

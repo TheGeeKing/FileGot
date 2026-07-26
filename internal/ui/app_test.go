@@ -18,6 +18,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/TheGeeKing/FileGot/internal/matcher"
 	"github.com/TheGeeKing/FileGot/internal/media"
 	"github.com/TheGeeKing/FileGot/internal/rename"
 	"github.com/TheGeeKing/FileGot/internal/settings"
@@ -366,6 +367,90 @@ func TestReviewCandidatesLimitsTVResults(t *testing.T) {
 	}
 	if got := reviewCandidates(candidates); len(got) != 12 {
 		t.Fatalf("movie candidates = %d, want unchanged", len(got))
+	}
+}
+
+func TestManualReviewSearchMovieAndEpisode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/search/movie":
+			if request.URL.Query().Get("query") != "Dune" || request.URL.Query().Get("year") != "2024" {
+				t.Fatalf("movie query = %q", request.URL.RawQuery)
+			}
+			_, _ = writer.Write([]byte(`{"results":[{"id":1,"title":"Dune","release_date":"2024-01-01"}]}`))
+		case "/search/tv":
+			if request.URL.Query().Get("query") != "The Last of Us" ||
+				request.URL.Query().Get("first_air_date_year") != "2023" {
+				t.Fatalf("TV query = %q", request.URL.RawQuery)
+			}
+			_, _ = writer.Write([]byte(`{"results":[{"id":2,"name":"The Last of Us","first_air_date":"2023-01-15"}]}`))
+		case "/movie/99":
+			_, _ = writer.Write([]byte(`{"id":99,"title":"Exact Movie","release_date":"2020-01-01"}`))
+		case "/tv/88":
+			_, _ = writer.Write([]byte(`{"id":88,"name":"Exact Show","first_air_date":"2021-01-01"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	engine := matcher.New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	movie, id, err := manualSearchParsed("Dune", "2024", "Movie", "", media.Parsed{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 0 {
+		t.Fatalf("search ID = %d, want 0", id)
+	}
+	movies, err := engine.Search(context.Background(), movie, options)
+	if err != nil || len(movies) != 1 || movies[0].Kind != media.Movie {
+		t.Fatalf("movie search = %#v, %v", movies, err)
+	}
+
+	file := media.File{
+		Path: "The.Last.of.Us.S01E03.mkv", Status: media.Unmatched,
+		Parsed: media.Parsed{Kind: media.Episode, Season: 1, Episode: 3},
+	}
+	episode, id, err := manualSearchParsed("The Last of Us", "2023", "TV series", "", file.Parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shows, err := engine.Search(context.Background(), episode, options)
+	if err != nil || len(shows) != 1 || shows[0].Season != 1 || shows[0].Episode != 3 {
+		t.Fatalf("TV search = %#v, %v", shows, err)
+	}
+	if file.Status != media.Unmatched || file.Candidate.ID != 0 || file.Proposed != "" {
+		t.Fatalf("search without selection changed file: %#v", file)
+	}
+
+	exact, id, err := manualSearchParsed("", "ignored", "TV series", "88", file.Parsed)
+	if err != nil || id != 88 {
+		t.Fatalf("exact request = %#v, %d, %v", exact, id, err)
+	}
+	candidate, err := engine.Lookup(context.Background(), exact, id, options)
+	if err != nil || candidate.ID != 88 || candidate.Season != 1 || candidate.Episode != 3 {
+		t.Fatalf("exact TV lookup = %#v, %v", candidate, err)
+	}
+	exact, id, err = manualSearchParsed("", "", "Movie", "99", media.Parsed{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err = engine.Lookup(context.Background(), exact, id, options)
+	if err != nil || candidate.ID != 99 || candidate.Kind != media.Movie {
+		t.Fatalf("exact movie lookup = %#v, %v", candidate, err)
+	}
+}
+
+func TestManualReviewSearchValidationDoesNotChangeFile(t *testing.T) {
+	file := media.File{Path: "unchanged.mkv", Status: media.Unmatched}
+	before := file
+	if _, _, err := manualSearchParsed("", "bad", "Movie", "", file.Parsed); err == nil {
+		t.Fatal("empty title should fail validation")
+	}
+	if file.Path != before.Path || file.Status != before.Status {
+		t.Fatalf("validation changed file from %#v to %#v", before, file)
 	}
 }
 
