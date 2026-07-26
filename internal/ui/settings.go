@@ -23,40 +23,6 @@ type namingSyntaxRow struct {
 	Type        string
 }
 
-var advancedExpressionRows = []namingSyntaxRow{
-	{`{" ($y)"}`, "Optional fragment; omitted when a binding is unavailable", "(2024)", "Expression"},
-	{`$y or ${y}`, "Insert a binding inside a quoted fragment", "2024", "Interpolation"},
-	{`{n.space('.').lower()}`, "Apply methods from left to right", "dune:.part.two", "Method chain"},
-	{`{y ? " ($y)" : ""}`, "Choose a value using a condition", "(2024)", "Conditional"},
-	{`!  &&  ||  ==  !=`, "Supported conditional operators", `{y != "" && n != "" ? n : ""}`, "Operator"},
-	{`'text' or "text"`, "String argument", "text", "String literal"},
-	{`/pattern/`, "RE2 regular-expression argument", `[!?.]+$`, "Regex literal"},
-	{`3`, "Positive integer argument", `{y.pad(6)}`, "Integer literal"},
-}
-
-var advancedMethodRows = []namingSyntaxRow{
-	{`{n.acronym()}`, "Keep the first letter of each word", "DPT", "String method"},
-	{`{n.after(': ')}`, "Keep text after a separator", "Part Two", "String method"},
-	{`{n.before(': ')}`, "Keep text before a separator", "Dune", "String method"},
-	{`{n.clean()}`, "Remove characters unsafe in filenames", "Dune Part Two", "String method"},
-	{`{n.colon(' - ')}`, "Replace colons", "Dune - Part Two", "String method"},
-	{`{primaryTitle.default('Unknown')}`, "Use a fallback when a binding is unavailable", "Unknown", "String method"},
-	{`{n.initialName()}`, "Abbreviate all but the last word", "D. P. Two", "String method"},
-	{`{n.lower()}`, "Convert text to lowercase", "dune: part two", "String method"},
-	{`{n.lowerTrail()}`, "Lowercase every letter except each word's first", "Dune: Part Two", "String method"},
-	{`{n.pad(20, '0')}`, "Pad text on the left to a length", "000000Dune: Part Two", "String method"},
-	{`{n.removeAll(/[!?.]+$/)}`, "Remove every regular-expression match", "Dune: Part Two", "String method"},
-	{`{n.replace('Two', '2')}`, "Replace literal text", "Dune: Part 2", "String method"},
-	{`{n.replaceAll(/Part/, 'Chapter')}`, "Replace every regular-expression match", "Dune: Chapter Two", "String method"},
-	{`{n.roman()}`, "Convert standalone numbers from 1 through 12", "Episode IV", "String method"},
-	{`{n.slash('.')}`, "Replace forward and backward slashes", "Dune.Part Two", "String method"},
-	{`{n.sortName()}`, "Remove a leading English article", "Walking Dead", "String method"},
-	{`{n.space('.')}`, "Replace whitespace", "Dune:.Part.Two", "String method"},
-	{`{n.trim()}`, "Remove surrounding whitespace", "Dune: Part Two", "String method"},
-	{`{n.upper()}`, "Convert text to uppercase", "DUNE: PART TWO", "String method"},
-	{`{n.upperInitial()}`, "Uppercase each word's first letter", "Dune: Part Two", "String method"},
-}
-
 func namingReferenceRows(mode string, kind media.Kind) []namingSyntaxRow {
 	if mode == settings.NamingSimple {
 		if kind == media.Movie {
@@ -76,30 +42,15 @@ func namingReferenceRows(mode string, kind media.Kind) []namingSyntaxRow {
 		}
 	}
 
-	var bindings []namingSyntaxRow
-	if kind == media.Movie {
-		bindings = []namingSyntaxRow{
-			{"{n}", "Movie title", "Dune: Part Two", "String"},
-			{"{ny}", "Movie title and release year", "Dune: Part Two (2024)", "String"},
-			{"{y}", "Release year", "2024", "Integer"},
-			{"{primaryTitle}", "Original movie title", "Dune: Part Two", "String"},
-			{"{tmdbid}", "TMDB movie ID", "438631", "Integer"},
-		}
-	} else {
-		bindings = []namingSyntaxRow{
-			{"{n}", "Series title", "The Last of Us", "String"},
-			{"{ny}", "Series title and premiere year", "The Last of Us (2023)", "String"},
-			{"{y}", "Series premiere year", "2023", "Integer"},
-			{"{s}", "Season number", "1", "Integer"},
-			{"{e}", "Episode number", "3", "Integer"},
-			{"{sxe}", "Season and episode", "1x03", "String"},
-			{"{s00e00}", "Padded season and episode", "S01E03", "String"},
-			{"{t}", "Episode title", "Long, Long Time", "String"},
-			{"{primaryTitle}", "Original series title", "The Last of Us", "String"},
-			{"{tmdbid}", "TMDB series ID", "100088", "Integer"},
+	catalog := media.AdvancedTemplateCatalog(kind)
+	rows := make([]namingSyntaxRow, len(catalog))
+	for index, item := range catalog {
+		rows[index] = namingSyntaxRow{
+			Syntax: item.Syntax, Description: item.Description,
+			Example: item.Example, Type: item.ReturnType,
 		}
 	}
-	return slices.Concat(bindings, advancedExpressionRows, advancedMethodRows)
+	return rows
 }
 
 func newNamingReferenceTable(rows func() []namingSyntaxRow) *widget.Table {
@@ -161,8 +112,12 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	namingMode.Horizontal = true
 	namingMode.Required = true
 	namingMode.SetSelected(mode)
-	moviePattern := widget.NewEntry()
-	episodePattern := widget.NewEntry()
+	moviePattern := newAdvancedTemplateEntry(media.Movie, func() bool {
+		return mode == settings.NamingAdvanced
+	})
+	episodePattern := newAdvancedTemplateEntry(media.Episode, func() bool {
+		return mode == settings.NamingAdvanced
+	})
 	if mode == settings.NamingAdvanced {
 		moviePattern.SetText(advancedMovie)
 		episodePattern.SetText(advancedEpisode)
@@ -264,8 +219,8 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		}
 		refreshValidation()
 	}
-	moviePattern.OnChanged = patternChanged
-	episodePattern.OnChanged = patternChanged
+	moviePattern.setOnChanged(patternChanged)
+	episodePattern.setOnChanged(patternChanged)
 	presetSelect.OnChanged = func(name string) {
 		if mode != settings.NamingSimple || name == "" || name == settings.PresetCustom {
 			return

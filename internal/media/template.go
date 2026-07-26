@@ -27,74 +27,809 @@ type templateData struct {
 	PrimaryTitle string
 }
 
-var fileBotBindings = map[Kind]map[string]string{
-	Movie: {
-		"n": "Name", "y": "Year", "ny": "NameYear",
-		"tmdbid": "TMDBID", "primaryTitle": "PrimaryTitle",
-	},
-	Episode: {
-		"n": "Name", "y": "Year", "ny": "NameYear", "s": "Season", "e": "Episode",
-		"sxe": "SxE", "s00e00": "S00E00", "t": "EpisodeTitle",
-		"tmdbid": "TMDBID", "primaryTitle": "PrimaryTitle",
-	},
-}
-
-type methodSignature uint8
+type AdvancedTemplateParameterType uint8
 
 const (
-	noArguments methodSignature = iota
-	oneString
-	twoStrings
-	padArguments
+	AdvancedTemplateString AdvancedTemplateParameterType = iota
+	AdvancedTemplateInteger
+	AdvancedTemplateRegularExpression
 )
 
-type fileBotMethod struct {
-	function      any
-	signature     methodSignature
-	regexArgument bool
-	allowsMissing bool
+func (parameterType AdvancedTemplateParameterType) String() string {
+	switch parameterType {
+	case AdvancedTemplateInteger:
+		return "Integer"
+	case AdvancedTemplateRegularExpression:
+		return "Regular expression"
+	default:
+		return "String"
+	}
 }
 
-var fileBotMethods = map[string]fileBotMethod{
-	"lower":        {function: strings.ToLower, signature: noArguments},
-	"upper":        {function: strings.ToUpper, signature: noArguments},
-	"trim":         {function: strings.TrimSpace, signature: noArguments},
-	"space":        {function: func(replacement, value string) string { return whitespace.ReplaceAllString(value, replacement) }, signature: oneString},
-	"pad":          {function: pad, signature: padArguments},
-	"replace":      {function: func(old, new, value string) string { return strings.ReplaceAll(value, old, new) }, signature: twoStrings},
-	"default":      {function: func(fallback, value string) string { return firstNonEmpty(value, fallback) }, signature: oneString, allowsMissing: true},
-	"colon":        {function: func(replacement, value string) string { return strings.ReplaceAll(value, ":", replacement) }, signature: oneString},
-	"slash":        {function: replaceSlashes, signature: oneString},
-	"before":       {function: before, signature: oneString},
-	"after":        {function: after, signature: oneString},
-	"removeAll":    {function: removeAll, signature: oneString, regexArgument: true},
-	"replaceAll":   {function: replaceAll, signature: twoStrings, regexArgument: true},
-	"upperInitial": {function: upperInitial, signature: noArguments},
-	"lowerTrail":   {function: lowerTrail, signature: noArguments},
-	"sortName":     {function: sortName, signature: noArguments},
-	"initialName":  {function: initialName, signature: noArguments},
-	"acronym":      {function: acronym, signature: noArguments},
-	"roman":        {function: roman, signature: noArguments},
-	"clean":        {function: func(value string) string { return Sanitize(value, 0) }, signature: noArguments},
+type AdvancedTemplateParameter struct {
+	Name        string
+	Type        AdvancedTemplateParameterType
+	Required    bool
+	Description string
+}
+
+type AdvancedTemplateSyntax struct {
+	Name        string
+	Syntax      string
+	Description string
+	Example     string
+	ReturnType  string
+	Parameters  []AdvancedTemplateParameter
+}
+
+type AdvancedTemplateCompletion struct {
+	AdvancedTemplateSyntax
+	InsertText   string
+	ReplaceStart int
+	ReplaceEnd   int
+	CursorBack   int
+}
+
+type AdvancedTemplateSignature struct {
+	AdvancedTemplateSyntax
+	ActiveParameter int
+}
+
+type fileBotBinding struct {
+	AdvancedTemplateSyntax
+	field string
+}
+
+var fileBotBindings = map[Kind][]fileBotBinding{
+	Movie: {
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "n", Syntax: "{n}", Description: "Movie title",
+				Example: "Dune: Part Two", ReturnType: "String",
+			},
+			field: "Name",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "ny", Syntax: "{ny}", Description: "Movie title and release year",
+				Example: "Dune: Part Two (2024)", ReturnType: "String",
+			},
+			field: "NameYear",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "primaryTitle", Syntax: "{primaryTitle}", Description: "Original movie title",
+				Example: "Dune: Part Two", ReturnType: "String",
+			},
+			field: "PrimaryTitle",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "tmdbid", Syntax: "{tmdbid}", Description: "TMDB movie ID",
+				Example: "438631", ReturnType: "Integer",
+			},
+			field: "TMDBID",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "y", Syntax: "{y}", Description: "Release year",
+				Example: "2024", ReturnType: "Integer",
+			},
+			field: "Year",
+		},
+	},
+	Episode: {
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "e", Syntax: "{e}", Description: "Episode number",
+				Example: "3", ReturnType: "Integer",
+			},
+			field: "Episode",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "n", Syntax: "{n}", Description: "Series title",
+				Example: "The Last of Us", ReturnType: "String",
+			},
+			field: "Name",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "ny", Syntax: "{ny}", Description: "Series title and premiere year",
+				Example: "The Last of Us (2023)", ReturnType: "String",
+			},
+			field: "NameYear",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "primaryTitle", Syntax: "{primaryTitle}", Description: "Original series title",
+				Example: "The Last of Us", ReturnType: "String",
+			},
+			field: "PrimaryTitle",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "s", Syntax: "{s}", Description: "Season number",
+				Example: "1", ReturnType: "Integer",
+			},
+			field: "Season",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "s00e00", Syntax: "{s00e00}", Description: "Padded season and episode",
+				Example: "S01E03", ReturnType: "String",
+			},
+			field: "S00E00",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "sxe", Syntax: "{sxe}", Description: "Season and episode",
+				Example: "1x03", ReturnType: "String",
+			},
+			field: "SxE",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "t", Syntax: "{t}", Description: "Episode title",
+				Example: "Long, Long Time", ReturnType: "String",
+			},
+			field: "EpisodeTitle",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "tmdbid", Syntax: "{tmdbid}", Description: "TMDB series ID",
+				Example: "100088", ReturnType: "Integer",
+			},
+			field: "TMDBID",
+		},
+		{
+			AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+				Name: "y", Syntax: "{y}", Description: "Series premiere year",
+				Example: "2023", ReturnType: "Integer",
+			},
+			field: "Year",
+		},
+	},
+}
+
+var advancedTemplateExpressions = []AdvancedTemplateSyntax{
+	{
+		Name: "Optional fragment", Syntax: `{" ($y)"}`,
+		Description: "Omitted when a binding is unavailable", Example: "(2024)", ReturnType: "Expression",
+	},
+	{
+		Name: "Interpolation", Syntax: `$y or ${y}`,
+		Description: "Insert a binding inside a quoted fragment", Example: "2024", ReturnType: "Interpolation",
+	},
+	{
+		Name: "Method chain", Syntax: `{n.space('.').lower()}`,
+		Description: "Apply methods from left to right", Example: "dune:.part.two", ReturnType: "Method chain",
+	},
+	{
+		Name: "Conditional", Syntax: `{y ? " ($y)" : ""}`,
+		Description: "Choose a value using a condition", Example: "(2024)", ReturnType: "Conditional",
+	},
+	{
+		Name: "Conditional operators", Syntax: `!  &&  ||  ==  !=`,
+		Description: "Supported conditional operators", Example: `{y != "" && n != "" ? n : ""}`, ReturnType: "Operator",
+	},
+	{
+		Name: "String literal", Syntax: `'text' or "text"`,
+		Description: "String argument", Example: "text", ReturnType: "String literal",
+	},
+	{
+		Name: "Regular expression", Syntax: `/pattern/`,
+		Description: "RE2 regular-expression argument", Example: `[!?.]+$`, ReturnType: "Regex literal",
+	},
+	{
+		Name: "Integer literal", Syntax: `3`,
+		Description: "Positive integer argument", Example: `{y.pad(6)}`, ReturnType: "Integer literal",
+	},
+}
+
+type fileBotMethod struct {
+	AdvancedTemplateSyntax
+	function        any
+	regexArgument   bool
+	allowsMissing   bool
+	integerReceiver bool
+}
+
+var fileBotMethods = []fileBotMethod{
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "acronym", Syntax: `{n.acronym()}`, Description: "Keep the first letter of each word",
+			Example: "DPT", ReturnType: "String",
+		},
+		function: acronym,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "after", Syntax: `{n.after(': ')}`, Description: "Keep text after a separator",
+			Example: "Part Two", ReturnType: "String",
+			Parameters: []AdvancedTemplateParameter{
+				{Name: "separator", Type: AdvancedTemplateString, Required: true, Description: "Text that marks where the result starts."},
+			},
+		},
+		function: after,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "before", Syntax: `{n.before(': ')}`, Description: "Keep text before a separator",
+			Example: "Dune", ReturnType: "String",
+			Parameters: []AdvancedTemplateParameter{
+				{Name: "separator", Type: AdvancedTemplateString, Required: true, Description: "Text that marks where the result ends."},
+			},
+		},
+		function: before,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "clean", Syntax: `{n.clean()}`, Description: "Remove characters unsafe in filenames",
+			Example: "Dune Part Two", ReturnType: "String",
+		},
+		function: func(value string) string { return Sanitize(value, 0) },
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "colon", Syntax: `{n.colon(' - ')}`, Description: "Replace colons",
+			Example: "Dune - Part Two", ReturnType: "String",
+			Parameters: []AdvancedTemplateParameter{
+				{Name: "replacement", Type: AdvancedTemplateString, Required: true, Description: "Text that replaces each colon."},
+			},
+		},
+		function: func(replacement, value string) string { return strings.ReplaceAll(value, ":", replacement) },
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "default", Syntax: `{primaryTitle.default('Unknown')}`, Description: "Use a fallback when a binding is unavailable",
+			Example: "Unknown", ReturnType: "String",
+			Parameters: []AdvancedTemplateParameter{
+				{Name: "fallback", Type: AdvancedTemplateString, Required: true, Description: "Value used when the binding is unavailable."},
+			},
+		},
+		function:      func(fallback, value string) string { return firstNonEmpty(value, fallback) },
+		allowsMissing: true, integerReceiver: true,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "initialName", Syntax: `{n.initialName()}`, Description: "Abbreviate all but the last word",
+			Example: "D. P. Two", ReturnType: "String",
+		},
+		function: initialName,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "lower", Syntax: `{n.lower()}`, Description: "Convert text to lowercase",
+			Example: "dune: part two", ReturnType: "String",
+		},
+		function: strings.ToLower,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "lowerTrail", Syntax: `{n.lowerTrail()}`, Description: "Lowercase every letter except each word's first",
+			Example: "Dune: Part Two", ReturnType: "String",
+		},
+		function: lowerTrail,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "pad", Syntax: `{n.pad(20, '0')}`, Description: "Pad text on the left to a length",
+			Example: "000000Dune: Part Two", ReturnType: "String",
+			Parameters: []AdvancedTemplateParameter{
+				{Name: "length", Type: AdvancedTemplateInteger, Required: true, Description: "Minimum result length."},
+				{Name: "padding", Type: AdvancedTemplateString, Description: `Text used for padding; defaults to "0".`},
+			},
+		},
+		function: pad, integerReceiver: true,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "removeAll", Syntax: `{n.removeAll(/[!?.]+$/)}`, Description: "Remove every regular-expression match",
+			Example: "Dune: Part Two", ReturnType: "String",
+			Parameters: []AdvancedTemplateParameter{
+				{Name: "pattern", Type: AdvancedTemplateRegularExpression, Required: true, Description: "RE2 pattern to remove."},
+			},
+		},
+		function: removeAll, regexArgument: true, integerReceiver: true,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "replace", Syntax: `{n.replace('Two', '2')}`, Description: "Replace literal text",
+			Example: "Dune: Part 2", ReturnType: "String",
+			Parameters: []AdvancedTemplateParameter{
+				{Name: "old", Type: AdvancedTemplateString, Required: true, Description: "Text to find."},
+				{Name: "new", Type: AdvancedTemplateString, Required: true, Description: "Replacement text."},
+			},
+		},
+		function:        func(old, new, value string) string { return strings.ReplaceAll(value, old, new) },
+		integerReceiver: true,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "replaceAll", Syntax: `{n.replaceAll(/Part/, 'Chapter')}`, Description: "Replace every regular-expression match",
+			Example: "Dune: Chapter Two", ReturnType: "String",
+			Parameters: []AdvancedTemplateParameter{
+				{Name: "pattern", Type: AdvancedTemplateRegularExpression, Required: true, Description: "RE2 pattern to find."},
+				{Name: "replacement", Type: AdvancedTemplateString, Required: true, Description: "Replacement text."},
+			},
+		},
+		function: replaceAll, regexArgument: true, integerReceiver: true,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "roman", Syntax: `{n.roman()}`, Description: "Convert standalone numbers from 1 through 12",
+			Example: "Episode IV", ReturnType: "String",
+		},
+		function: roman, integerReceiver: true,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "slash", Syntax: `{n.slash('.')}`, Description: "Replace forward and backward slashes",
+			Example: "Dune.Part Two", ReturnType: "String",
+			Parameters: []AdvancedTemplateParameter{
+				{Name: "replacement", Type: AdvancedTemplateString, Required: true, Description: "Text that replaces each slash."},
+			},
+		},
+		function: replaceSlashes,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "sortName", Syntax: `{n.sortName()}`, Description: "Remove a leading English article",
+			Example: "Walking Dead", ReturnType: "String",
+		},
+		function: sortName,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "space", Syntax: `{n.space('.')}`, Description: "Replace whitespace",
+			Example: "Dune:.Part.Two", ReturnType: "String",
+			Parameters: []AdvancedTemplateParameter{
+				{Name: "replacement", Type: AdvancedTemplateString, Required: true, Description: "Text that replaces each whitespace run."},
+			},
+		},
+		function: func(replacement, value string) string { return whitespace.ReplaceAllString(value, replacement) },
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "trim", Syntax: `{n.trim()}`, Description: "Remove surrounding whitespace",
+			Example: "Dune: Part Two", ReturnType: "String",
+		},
+		function: strings.TrimSpace,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "upper", Syntax: `{n.upper()}`, Description: "Convert text to uppercase",
+			Example: "DUNE: PART TWO", ReturnType: "String",
+		},
+		function: strings.ToUpper,
+	},
+	{
+		AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+			Name: "upperInitial", Syntax: `{n.upperInitial()}`, Description: "Uppercase each word's first letter",
+			Example: "Dune: Part Two", ReturnType: "String",
+		},
+		function: upperInitial,
+	},
 }
 
 var romanNumber = regexp.MustCompile(`\b(?:1[0-2]|[1-9])\b`)
 
 var fileBotFunctions = func() template.FuncMap {
 	functions := template.FuncMap{"required": required}
-	for name, method := range fileBotMethods {
-		functions[name] = method.function
+	for _, method := range fileBotMethods {
+		functions[method.Name] = method.function
 	}
 	return functions
 }()
 
 func AdvancedTemplateMethods() []string {
 	methods := make([]string, 0, len(fileBotMethods))
-	for name := range fileBotMethods {
-		methods = append(methods, name)
+	for _, method := range fileBotMethods {
+		methods = append(methods, method.Name)
 	}
 	sort.Strings(methods)
 	return methods
+}
+
+func AdvancedTemplateCatalog(kind Kind) []AdvancedTemplateSyntax {
+	bindings := fileBotBindings[kind]
+	catalog := make([]AdvancedTemplateSyntax, 0, len(bindings)+len(advancedTemplateExpressions)+len(fileBotMethods))
+	for _, binding := range bindings {
+		catalog = append(catalog, binding.AdvancedTemplateSyntax)
+	}
+	catalog = append(catalog, advancedTemplateExpressions...)
+	for _, method := range fileBotMethods {
+		catalog = append(catalog, method.AdvancedTemplateSyntax)
+	}
+	return catalog
+}
+
+func AdvancedTemplateCompletions(kind Kind, pattern string, cursor int) []AdvancedTemplateCompletion {
+	runes := []rune(pattern)
+	start, inLiteral := advancedExpressionAt(runes, cursor)
+	if start < 0 {
+		return nil
+	}
+	if inLiteral {
+		if !advancedOuterString(runes[start+1 : cursor]) {
+			return nil
+		}
+		return advancedInterpolationCompletions(kind, runes, start, cursor)
+	}
+
+	expression := runes[start+1 : cursor]
+	prefixStart := 0
+	for prefixStart < len(expression) && unicode.IsSpace(expression[prefixStart]) {
+		prefixStart++
+	}
+	if prefix := expression[prefixStart:]; advancedIdentifier(prefix) {
+		return advancedCompletions(
+			fileBotBindingSyntax(kind),
+			string(prefix),
+			start+1+prefixStart,
+			advancedIdentifierEnd(runes, cursor),
+			"",
+		)
+	}
+
+	dot := advancedTopLevelDot(expression)
+	if dot < 0 || !advancedIdentifier(expression[dot+1:]) {
+		return nil
+	}
+	base := strings.TrimSpace(string(expression[:dot]))
+	normalized, err := normalizeFileBotExpression(base)
+	if err != nil {
+		return nil
+	}
+	node, err := parser.ParseExpr(normalized)
+	if err != nil {
+		return nil
+	}
+	_, _, _, receiverType, _, err := compileFileBotNode(kind, node)
+	if err != nil {
+		return nil
+	}
+	return advancedCompletions(
+		fileBotMethodSyntax(receiverType),
+		string(expression[dot+1:]),
+		start+1+dot+1,
+		advancedIdentifierEnd(runes, cursor),
+		base,
+	)
+}
+
+func advancedInterpolationCompletions(kind Kind, pattern []rune, start, cursor int) []AdvancedTemplateCompletion {
+	for dollar := cursor - 1; dollar > start; dollar-- {
+		if pattern[dollar] != '$' {
+			continue
+		}
+		expression := pattern[dollar+1 : cursor]
+		dot := advancedTopLevelDot(expression)
+		if dot < 0 || !advancedIdentifier(expression[dot+1:]) {
+			continue
+		}
+		base := strings.TrimSpace(string(expression[:dot]))
+		normalized, err := normalizeFileBotExpression(base)
+		if err != nil {
+			continue
+		}
+		node, err := parser.ParseExpr(normalized)
+		if err != nil {
+			continue
+		}
+		_, _, _, receiverType, _, err := compileFileBotNode(kind, node)
+		if err != nil {
+			continue
+		}
+		completions := advancedCompletions(
+			fileBotMethodSyntax(receiverType),
+			string(expression[dot+1:]),
+			dollar+1+dot+1,
+			advancedIdentifierEnd(pattern, cursor),
+			base,
+		)
+		for index := range completions {
+			completions[index].Syntax = `{"$` +
+				strings.TrimSuffix(strings.TrimPrefix(completions[index].Syntax, "{"), "}") +
+				`"}`
+		}
+		return completions
+	}
+	return nil
+}
+
+type advancedLiteralState struct {
+	quote   rune
+	regex   bool
+	escaped bool
+}
+
+func (state *advancedLiteralState) consume(character rune) bool {
+	if state.escaped {
+		state.escaped = false
+		return true
+	}
+	if state.quote != 0 {
+		if character == '\\' {
+			state.escaped = true
+		} else if character == state.quote {
+			state.quote = 0
+		}
+		return true
+	}
+	if state.regex {
+		if character == '\\' {
+			state.escaped = true
+		} else if character == '/' {
+			state.regex = false
+		}
+		return true
+	}
+	switch character {
+	case '\'', '"':
+		state.quote = character
+		return true
+	case '/':
+		state.regex = true
+		return true
+	default:
+		return false
+	}
+}
+
+func (state advancedLiteralState) active() bool {
+	return state.quote != 0 || state.regex
+}
+
+func AdvancedTemplateSignatureHelp(kind Kind, pattern string, cursor int) *AdvancedTemplateSignature {
+	runes := []rune(pattern)
+	start, inLiteral := advancedExpressionAt(runes, cursor)
+	if start < 0 {
+		return nil
+	}
+
+	type call struct {
+		name     string
+		receiver string
+		commas   int
+	}
+	var calls []call
+	var literal advancedLiteralState
+	expression := runes[start+1 : cursor]
+	if inLiteral && advancedOuterString(expression) {
+		dollar := -1
+		for index := len(expression) - 1; index >= 0; index-- {
+			if expression[index] == '$' {
+				dollar = index
+				break
+			}
+		}
+		if dollar < 0 {
+			return nil
+		}
+		expression = expression[dollar+1:]
+	}
+	for index, character := range expression {
+		if literal.consume(character) {
+			continue
+		}
+		switch character {
+		case '(':
+			name, receiver := advancedMethodBefore(expression, index)
+			calls = append(calls, call{name: name, receiver: receiver})
+		case ')':
+			if len(calls) > 0 {
+				calls = calls[:len(calls)-1]
+			}
+		case ',':
+			if len(calls) > 0 {
+				calls[len(calls)-1].commas++
+			}
+		}
+	}
+
+	for index := len(calls) - 1; index >= 0; index-- {
+		method, ok := fileBotMethodByName(calls[index].name)
+		if !ok {
+			continue
+		}
+		tooManyArguments := len(method.Parameters) == 0 && calls[index].commas > 0 ||
+			len(method.Parameters) > 0 && calls[index].commas >= len(method.Parameters)
+		receiverType, ok := advancedReceiverType(kind, calls[index].receiver)
+		if !ok || !method.acceptsReceiver(receiverType) || tooManyArguments {
+			return nil
+		}
+		active := calls[index].commas
+		return &AdvancedTemplateSignature{
+			AdvancedTemplateSyntax: method.AdvancedTemplateSyntax,
+			ActiveParameter:        active,
+		}
+	}
+	return nil
+}
+
+func advancedOuterString(expression []rune) bool {
+	for _, character := range expression {
+		if unicode.IsSpace(character) {
+			continue
+		}
+		return character == '\'' || character == '"'
+	}
+	return false
+}
+
+func advancedExpressionAt(pattern []rune, cursor int) (int, bool) {
+	if cursor < 0 || cursor > len(pattern) {
+		return -1, false
+	}
+	start := -1
+	var literal advancedLiteralState
+	for index, character := range pattern[:cursor] {
+		if start < 0 {
+			if character == '{' {
+				start = index
+			}
+			continue
+		}
+		if literal.consume(character) {
+			continue
+		}
+		if character == '}' {
+			start = -1
+		}
+	}
+	return start, literal.active()
+}
+
+func advancedTopLevelDot(expression []rune) int {
+	dot, depth := -1, 0
+	var literal advancedLiteralState
+	for index, character := range expression {
+		if literal.consume(character) {
+			continue
+		}
+		switch character {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case '.':
+			if depth == 0 {
+				dot = index
+			}
+		}
+	}
+	return dot
+}
+
+func advancedMethodBefore(expression []rune, opening int) (string, string) {
+	end := opening
+	for end > 0 && unicode.IsSpace(expression[end-1]) {
+		end--
+	}
+	start := end
+	for start > 0 && advancedIdentifierRune(expression[start-1]) {
+		start--
+	}
+	dot := start
+	for dot > 0 && unicode.IsSpace(expression[dot-1]) {
+		dot--
+	}
+	if start == end || dot == 0 || expression[dot-1] != '.' {
+		return "", ""
+	}
+	return string(expression[start:end]), strings.TrimSpace(string(expression[:dot-1]))
+}
+
+func advancedReceiverType(kind Kind, receiver string) (string, bool) {
+	normalized, err := normalizeFileBotExpression(receiver)
+	if err != nil {
+		return "", false
+	}
+	node, err := parser.ParseExpr(normalized)
+	if err != nil {
+		return "", false
+	}
+	_, _, _, receiverType, _, err := compileFileBotNode(kind, node)
+	if err != nil {
+		return "", false
+	}
+	return receiverType, true
+}
+
+func advancedIdentifier(value []rune) bool {
+	for _, character := range value {
+		if !advancedIdentifierRune(character) {
+			return false
+		}
+	}
+	return true
+}
+
+func advancedIdentifierRune(character rune) bool {
+	return character == '_' || unicode.IsLetter(character) || unicode.IsDigit(character)
+}
+
+func advancedIdentifierEnd(pattern []rune, cursor int) int {
+	for cursor < len(pattern) && advancedIdentifierRune(pattern[cursor]) {
+		cursor++
+	}
+	return cursor
+}
+
+func advancedCompletions(
+	syntax []AdvancedTemplateSyntax,
+	prefix string,
+	start, end int,
+	receiver string,
+) []AdvancedTemplateCompletion {
+	var completions []AdvancedTemplateCompletion
+	for _, item := range syntax {
+		if !strings.HasPrefix(item.Name, prefix) {
+			continue
+		}
+		insert := item.Name
+		cursorBack := 0
+		if receiver != "" {
+			insert += "()"
+			if len(item.Parameters) > 0 {
+				cursorBack = 1
+			}
+			if dot := strings.Index(item.Syntax, "."); dot >= 0 {
+				item.Syntax = "{" + receiver + item.Syntax[dot:]
+			}
+		}
+		completions = append(completions, AdvancedTemplateCompletion{
+			AdvancedTemplateSyntax: item,
+			InsertText:             insert,
+			ReplaceStart:           start,
+			ReplaceEnd:             end,
+			CursorBack:             cursorBack,
+		})
+	}
+	return completions
+}
+
+func fileBotBindingSyntax(kind Kind) []AdvancedTemplateSyntax {
+	bindings := fileBotBindings[kind]
+	syntax := make([]AdvancedTemplateSyntax, len(bindings))
+	for index, binding := range bindings {
+		syntax[index] = binding.AdvancedTemplateSyntax
+	}
+	return syntax
+}
+
+func fileBotMethodSyntax(receiverType string) []AdvancedTemplateSyntax {
+	var syntax []AdvancedTemplateSyntax
+	for _, method := range fileBotMethods {
+		if method.acceptsReceiver(receiverType) {
+			syntax = append(syntax, method.AdvancedTemplateSyntax)
+		}
+	}
+	return syntax
+}
+
+func fileBotBindingByName(kind Kind, name string) (fileBotBinding, bool) {
+	for _, binding := range fileBotBindings[kind] {
+		if binding.Name == name {
+			return binding, true
+		}
+	}
+	return fileBotBinding{}, false
+}
+
+func fileBotMethodByName(name string) (fileBotMethod, bool) {
+	for _, method := range fileBotMethods {
+		if method.Name == name {
+			return method, true
+		}
+	}
+	return fileBotMethod{}, false
+}
+
+func (method fileBotMethod) acceptsReceiver(receiverType string) bool {
+	return receiverType == "String" || receiverType == "Integer" && method.integerReceiver
 }
 
 func ValidateAdvancedPattern(kind Kind, pattern string) error {
@@ -252,7 +987,7 @@ func compileFileBotExpression(kind Kind, expression string) (string, error) {
 			return compileFileBotConditional(kind, call.Args)
 		}
 	}
-	field, binding, pipeline, allowsMissing, err := compileFileBotNode(kind, node)
+	field, binding, pipeline, _, allowsMissing, err := compileFileBotNode(kind, node)
 	if err != nil {
 		return "", err
 	}
@@ -436,28 +1171,28 @@ func readFileBotDelimited(value string, start int, delimiter byte) (string, int,
 	return "", 0, fmt.Errorf("unclosed literal")
 }
 
-func compileFileBotNode(kind Kind, node ast.Expr) (string, string, string, bool, error) {
+func compileFileBotNode(kind Kind, node ast.Expr) (string, string, string, string, bool, error) {
 	switch current := node.(type) {
 	case *ast.Ident:
-		field, ok := fileBotBindings[kind][current.Name]
+		binding, ok := fileBotBindingByName(kind, current.Name)
 		if !ok {
-			return "", "", "", false, fmt.Errorf("binding %s is not available for %s names", current.Name, kind)
+			return "", "", "", "", false, fmt.Errorf("binding %s is not available for %s names", current.Name, kind)
 		}
-		return field, current.Name, "", false, nil
+		return binding.field, current.Name, "", binding.ReturnType, false, nil
 	case *ast.CallExpr:
 		selector, ok := current.Fun.(*ast.SelectorExpr)
 		if !ok {
-			return "", "", "", false, fmt.Errorf("only binding methods are allowed")
+			return "", "", "", "", false, fmt.Errorf("only binding methods are allowed")
 		}
-		field, binding, pipeline, allowsMissing, err := compileFileBotNode(kind, selector.X)
+		field, binding, pipeline, receiverType, allowsMissing, err := compileFileBotNode(kind, selector.X)
 		if err != nil {
-			return "", "", "", false, err
+			return "", "", "", "", false, err
 		}
 		arguments := make([]fileBotArgument, 0, len(current.Args))
 		for _, argument := range current.Args {
 			value, err := compileFileBotArgument(argument)
 			if err != nil {
-				return "", "", "", false, err
+				return "", "", "", "", false, err
 			}
 			arguments = append(arguments, value)
 		}
@@ -465,10 +1200,17 @@ func compileFileBotNode(kind Kind, node ast.Expr) (string, string, string, bool,
 		if method == "_default" {
 			method = "default"
 		}
+		definition, ok := fileBotMethodByName(method)
+		if !ok {
+			return "", "", "", "", false, fmt.Errorf("method %s is not allowed", method)
+		}
+		if !definition.acceptsReceiver(receiverType) {
+			return "", "", "", "", false, fmt.Errorf("%s is not available for %s values", method, receiverType)
+		}
 		step, err := compileFileBotMethod(method, arguments)
-		return field, binding, pipeline + step, allowsMissing || fileBotMethods[method].allowsMissing, err
+		return field, binding, pipeline + step, definition.ReturnType, allowsMissing || definition.allowsMissing, err
 	default:
-		return "", "", "", false, fmt.Errorf("unsupported expression")
+		return "", "", "", "", false, fmt.Errorf("unsupported expression")
 	}
 }
 
@@ -496,7 +1238,7 @@ func compileFileBotCondition(kind Kind, node ast.Expr) (string, error) {
 	case *ast.ParenExpr:
 		return compileFileBotCondition(kind, current.X)
 	case *ast.Ident, *ast.CallExpr:
-		field, _, pipeline, _, err := compileFileBotNode(kind, current)
+		field, _, pipeline, _, _, err := compileFileBotNode(kind, current)
 		if err != nil {
 			return "", err
 		}
@@ -543,7 +1285,7 @@ func compileFileBotResult(kind Kind, node ast.Expr) (string, error) {
 		}
 		return compileInterpolation(kind, value)
 	}
-	field, binding, pipeline, allowsMissing, err := compileFileBotNode(kind, node)
+	field, binding, pipeline, _, allowsMissing, err := compileFileBotNode(kind, node)
 	if err != nil {
 		return "", fmt.Errorf("conditional results must be strings or binding expressions")
 	}
@@ -574,8 +1316,9 @@ func compileFileBotArgument(node ast.Expr) (fileBotArgument, error) {
 
 func compileInterpolation(kind Kind, value string) (string, error) {
 	type part struct {
-		value string
-		field string
+		value    string
+		field    string
+		pipeline string
 	}
 	var parts []part
 	var fields []string
@@ -601,12 +1344,12 @@ func compileInterpolation(kind Kind, value string) (string, error) {
 			}
 			name := value[nameStart:index]
 			index++
-			field, ok := fileBotBindings[kind][name]
+			binding, ok := fileBotBindingByName(kind, name)
 			if !ok {
 				return "", fmt.Errorf("binding %s is not available for %s names", name, kind)
 			}
-			parts = append(parts, part{field: field})
-			fields = appendUnique(fields, field)
+			parts = append(parts, part{field: binding.field})
+			fields = appendUnique(fields, binding.field)
 			start = index
 			continue
 		}
@@ -616,12 +1359,20 @@ func compileInterpolation(kind Kind, value string) (string, error) {
 		if index == nameStart {
 			return "", fmt.Errorf("invalid interpolation")
 		}
-		name := value[nameStart:index]
-		field, ok := fileBotBindings[kind][name]
-		if !ok {
-			return "", fmt.Errorf("binding %s is not available for %s names", name, kind)
+		index = interpolationExpressionEnd(value, index)
+		normalized, err := normalizeFileBotExpression(value[nameStart:index])
+		if err != nil {
+			return "", err
 		}
-		parts = append(parts, part{field: field})
+		node, err := parser.ParseExpr(normalized)
+		if err != nil {
+			return "", fmt.Errorf("invalid interpolation expression")
+		}
+		field, _, pipeline, _, _, err := compileFileBotNode(kind, node)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, part{field: field, pipeline: pipeline})
 		fields = appendUnique(fields, field)
 		start = index
 	}
@@ -646,6 +1397,7 @@ func compileInterpolation(kind Kind, value string) (string, error) {
 		if current.field != "" {
 			compiled.WriteString("{{.")
 			compiled.WriteString(current.field)
+			compiled.WriteString(current.pipeline)
 			compiled.WriteString("}}")
 		} else {
 			writeTemplateLiteral(&compiled, current.value)
@@ -657,52 +1409,92 @@ func compileInterpolation(kind Kind, value string) (string, error) {
 	return compiled.String(), nil
 }
 
+func interpolationExpressionEnd(value string, end int) int {
+	for end < len(value) && value[end] == '.' {
+		nameEnd := end + 1
+		for nameEnd < len(value) && isIdentifierPart(value[nameEnd]) {
+			nameEnd++
+		}
+		if nameEnd == end+1 || nameEnd == len(value) || value[nameEnd] != '(' {
+			break
+		}
+		callEnd, ok := interpolationCallEnd(value, nameEnd)
+		if !ok {
+			return len(value)
+		}
+		end = callEnd
+	}
+	return end
+}
+
+func interpolationCallEnd(value string, opening int) (int, bool) {
+	depth := 0
+	var literal advancedLiteralState
+	for index, character := range value[opening:] {
+		if literal.consume(character) {
+			continue
+		}
+		switch character {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return opening + index + 1, true
+			}
+		}
+	}
+	return 0, false
+}
+
 type fileBotArgument struct {
 	text   string
 	number bool
 }
 
 func compileFileBotMethod(name string, arguments []fileBotArgument) (string, error) {
-	method, ok := fileBotMethods[name]
+	method, ok := fileBotMethodByName(name)
 	if !ok {
 		return "", fmt.Errorf("method %s is not allowed", name)
 	}
+	required := 0
+	for _, parameter := range method.Parameters {
+		if parameter.Required {
+			required++
+		}
+	}
+	if len(arguments) < required || len(arguments) > len(method.Parameters) {
+		return "", fmt.Errorf("%s expects %d to %d arguments", name, required, len(method.Parameters))
+	}
+	for index, argument := range arguments {
+		integer := method.Parameters[index].Type == AdvancedTemplateInteger
+		if integer != argument.number {
+			return "", fmt.Errorf("%s argument %s expects %s", name, method.Parameters[index].Name, method.Parameters[index].Type)
+		}
+	}
 	if method.regexArgument {
-		if len(arguments) > 0 && !arguments[0].number {
+		if len(arguments) > 0 {
 			if _, err := regexp.Compile(arguments[0].text); err != nil {
 				return "", fmt.Errorf("%s regular expression: %w", name, err)
 			}
 		}
 	}
 
-	switch method.signature {
-	case noArguments:
-		if len(arguments) != 0 {
-			return "", fmt.Errorf("%s expects no arguments", name)
+	var pipeline strings.Builder
+	pipeline.WriteString(" | ")
+	pipeline.WriteString(name)
+	for _, argument := range arguments {
+		pipeline.WriteByte(' ')
+		if argument.number {
+			pipeline.WriteString(argument.text)
+		} else {
+			pipeline.WriteString(strconv.Quote(argument.text))
 		}
-		return " | " + name, nil
-	case oneString:
-		if len(arguments) != 1 || arguments[0].number {
-			return "", fmt.Errorf("%s expects one string argument", name)
-		}
-		return " | " + name + " " + strconv.Quote(arguments[0].text), nil
-	case twoStrings:
-		if len(arguments) != 2 || arguments[0].number || arguments[1].number {
-			return "", fmt.Errorf("%s expects two string arguments", name)
-		}
-		return " | " + name + " " + strconv.Quote(arguments[0].text) + " " + strconv.Quote(arguments[1].text), nil
-	case padArguments:
-		if len(arguments) < 1 || len(arguments) > 2 || !arguments[0].number ||
-			(len(arguments) == 2 && arguments[1].number) {
-			return "", fmt.Errorf("pad expects a length and optional padding string")
-		}
-		padding := "0"
-		if len(arguments) == 2 {
-			padding = arguments[1].text
-		}
-		return " | pad " + arguments[0].text + " " + strconv.Quote(padding), nil
 	}
-	return "", fmt.Errorf("method %s has an unsupported signature", name)
+	if name == "pad" && len(arguments) == 1 {
+		pipeline.WriteString(` "0"`)
+	}
+	return pipeline.String(), nil
 }
 
 func writeTemplateLiteral(target *strings.Builder, value string) {

@@ -13,6 +13,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -602,6 +603,181 @@ func TestNamingReferenceTablesCoverCompatibleSyntax(t *testing.T) {
 	table.UpdateHeader(widget.TableCellID{Row: -1, Col: 0}, header)
 	if header.(*widget.Label).Text != "Syntax" {
 		t.Fatalf("first header = %q", header.(*widget.Label).Text)
+	}
+}
+
+func TestAdvancedTemplateEntryAcceptsAndDismissesCompletions(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	window := app.NewWindow("Advanced template")
+	entry := newAdvancedTemplateEntry(media.Movie, func() bool { return true })
+	window.SetContent(entry)
+	window.Show()
+	t.Cleanup(window.Close)
+
+	test.Type(entry, "{n.")
+	if entry.Text != "{n." || len(entry.completions) != len(media.AdvancedTemplateMethods()) {
+		t.Fatalf("typing changed text or missed completions: text=%q completions=%d", entry.Text, len(entry.completions))
+	}
+	if entry.popup == nil || !entry.popup.Visible() ||
+		!strings.Contains(entry.completionButtons[0].Text, "String") ||
+		!strings.Contains(entry.completionButtons[0].Text, "{n.acronym()}") {
+		t.Fatal("completion popup should show return type and compact example")
+	}
+
+	for range 8 {
+		entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyDown})
+	}
+	if entry.completionScroll == nil || entry.completionScroll.Offset.Y == 0 {
+		t.Fatal("keyboard navigation should scroll the selected completion into view")
+	}
+	for range 8 {
+		entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyUp})
+	}
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyDown})
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEnter})
+	if entry.Text != "{n.after()" || entry.CursorTextOffset() != len([]rune("{n.after(")) {
+		t.Fatalf("accepted completion = %q at %d", entry.Text, entry.CursorTextOffset())
+	}
+	if entry.signature == nil || entry.signature.Name != "after" || entry.signature.ActiveParameter != 0 {
+		t.Fatalf("signature after completion = %#v", entry.signature)
+	}
+
+	entry.SetText("{n.")
+	entry.CursorColumn = len([]rune(entry.Text))
+	entry.refreshAssist()
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEscape})
+	if entry.Text != "{n." || entry.popup != nil || len(entry.completions) != 0 {
+		t.Fatalf("escape changed text or kept popup: text=%q completions=%d", entry.Text, len(entry.completions))
+	}
+
+	entry.SetText("prefix {pr} suffix")
+	entry.CursorColumn = 10
+	entry.refreshAssist()
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEnter})
+	if entry.Text != "prefix {primaryTitle} suffix" {
+		t.Fatalf("completion replaced unrelated text: %q", entry.Text)
+	}
+}
+
+func TestAdvancedTemplateEntryAcceptsFocusedCanvasTyping(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	window := app.NewWindow("Advanced template")
+	entry := newAdvancedTemplateEntry(media.Movie, func() bool { return true })
+	window.SetContent(entry)
+	window.Show()
+	t.Cleanup(window.Close)
+
+	mouse := &desktop.MouseEvent{
+		PointEvent: fyne.PointEvent{Position: fyne.NewPos(1, 1)},
+		Button:     desktop.MouseButtonPrimary,
+	}
+	entry.MouseDown(mouse)
+	entry.MouseUp(mouse)
+	if window.Canvas().Focused() != entry {
+		t.Fatal("clicking the template entry did not focus it")
+	}
+	window.Canvas().Focused().TypedRune('{')
+	if window.Canvas().Focused() == nil {
+		t.Fatal("opening completions stole focus from the template entry")
+	}
+	window.Canvas().Focused().TypedRune('n')
+	window.Canvas().Focused().TypedRune('.')
+
+	if entry.Text != "{n." {
+		t.Fatalf("focused canvas typing = %q, want %q", entry.Text, "{n.")
+	}
+}
+
+func TestAdvancedTemplateEntryMouseCompletionPlacesCursor(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	window := app.NewWindow("Advanced template")
+	entry := newAdvancedTemplateEntry(media.Movie, func() bool { return true })
+	window.SetContent(entry)
+	window.Show()
+	t.Cleanup(window.Close)
+
+	var cursorMoves []int
+	entry.Entry.OnCursorChanged = func() {
+		cursorMoves = append(cursorMoves, entry.CursorTextOffset())
+		entry.cursorChanged()
+	}
+	test.Type(entry, "{n.acr")
+	cursorMoves = nil
+	test.Tap(entry.completionButtons[0])
+	if entry.Text != "{n.acronym()" || entry.CursorTextOffset() != len([]rune("{n.acronym()")) {
+		t.Fatalf("no-argument completion = %q at %d", entry.Text, entry.CursorTextOffset())
+	}
+	if len(cursorMoves) == 0 || cursorMoves[len(cursorMoves)-1] != entry.CursorTextOffset() {
+		t.Fatalf("rendered cursor did not move to accepted no-argument completion: %v", cursorMoves)
+	}
+
+	entry.SetText("{n.aft")
+	entry.CursorColumn = len([]rune(entry.Text))
+	entry.refreshAssist()
+	cursorMoves = nil
+	test.Tap(entry.completionButtons[0])
+	if entry.Text != "{n.after()" || entry.CursorTextOffset() != len([]rune("{n.after(")) {
+		t.Fatalf("argument completion = %q at %d", entry.Text, entry.CursorTextOffset())
+	}
+	if len(cursorMoves) == 0 || cursorMoves[len(cursorMoves)-1] != entry.CursorTextOffset() {
+		t.Fatalf("rendered cursor did not move inside accepted argument completion: %v", cursorMoves)
+	}
+
+	entry.SetText(`{" ($y.`)
+	entry.CursorColumn = len([]rune(entry.Text))
+	entry.refreshAssist()
+	replace := slices.IndexFunc(entry.completions, func(completion media.AdvancedTemplateCompletion) bool {
+		return completion.Name == "replace"
+	})
+	if replace < 0 {
+		t.Fatal("replace completion missing from integer interpolation")
+	}
+	test.Tap(entry.completionButtons[replace])
+	if entry.Text != `{" ($y.replace()` || entry.signature == nil || entry.signature.Name != "replace" {
+		t.Fatalf("interpolation completion = %q with signature %#v", entry.Text, entry.signature)
+	}
+}
+
+func TestAdvancedTemplateEntryFiltersAndTracksSignatureParameters(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	window := app.NewWindow("Advanced template")
+	entry := newAdvancedTemplateEntry(media.Movie, func() bool { return true })
+	window.SetContent(entry)
+	window.Show()
+	t.Cleanup(window.Close)
+
+	test.Type(entry, "{n.repl")
+	names := make([]string, len(entry.completions))
+	for index, completion := range entry.completions {
+		names[index] = completion.Name
+	}
+	if !slices.Equal(names, []string{"replace", "replaceAll"}) {
+		t.Fatalf("filtered completions = %v", names)
+	}
+
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyTab})
+	if entry.Text != "{n.replace()" || entry.CursorTextOffset() != len([]rune("{n.replace(")) {
+		t.Fatalf("tab completion = %q at %d", entry.Text, entry.CursorTextOffset())
+	}
+	test.Type(entry, "'old', ")
+	if entry.signature == nil || entry.signature.Name != "replace" || entry.signature.ActiveParameter != 1 {
+		t.Fatalf("second parameter signature = %#v", entry.signature)
+	}
+	if len(entry.completions) != 0 {
+		t.Fatalf("literal should not offer completions: %#v", entry.completions)
+	}
+	if entry.popup == nil || !strings.Contains(entry.signatureLabel.Text, "new") ||
+		!strings.Contains(entry.signatureLabel.Text, "required") {
+		t.Fatal("signature popup should highlight the required new parameter")
+	}
+	beforeEscape := entry.Text
+	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEscape})
+	if entry.Text != beforeEscape || entry.popup != nil || entry.signature != nil {
+		t.Fatal("escape should dismiss signature help without changing text")
 	}
 }
 

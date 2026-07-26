@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -176,6 +178,18 @@ func TestFormatAdvancedConditionals(t *testing.T) {
 	}
 }
 
+func TestFormatAdvancedInterpolationMethods(t *testing.T) {
+	got, err := FormatAdvanced(`{"Year $y.replace('2', '3')"}`, "movie.mkv", Candidate{
+		Kind: Movie, Title: "Dune", Year: 2024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Year 3034.mkv"; got != want {
+		t.Fatalf("FormatAdvanced() = %q, want %q", got, want)
+	}
+}
+
 func TestAdvancedTemplateHelpers(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -226,6 +240,9 @@ func TestValidateAdvancedTemplate(t *testing.T) {
 	if err := ValidateAdvancedPattern(Movie, valid); err != nil {
 		t.Fatalf("valid template rejected: %v", err)
 	}
+	if err := ValidateAdvancedPattern(Movie, `{y.replace('2', '3')}`); err != nil {
+		t.Fatalf("valid integer replacement rejected: %v", err)
+	}
 
 	invalid := []string{
 		`{{range .Title}}{{.}}{{end}}`,
@@ -234,6 +251,7 @@ func TestValidateAdvancedTemplate(t *testing.T) {
 		`{n.unknown()}`,
 		`{n.lower('extra')}`,
 		`{n.replace('one')}`,
+		`{y.acronym()}`,
 		`{y == 2024 ? n : n.removeAll(/[invalid/)}`,
 		`{n; env('HOME')}`,
 		`{n`,
@@ -245,6 +263,208 @@ func TestValidateAdvancedTemplate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAdvancedTemplateCatalog(t *testing.T) {
+	movie := AdvancedTemplateCatalog(Movie)
+	episode := AdvancedTemplateCatalog(Episode)
+
+	if !hasAdvancedSyntax(movie, "n") || hasAdvancedSyntax(movie, "t") {
+		t.Fatalf("movie bindings = %#v", movie)
+	}
+	if !hasAdvancedSyntax(episode, "n") || !hasAdvancedSyntax(episode, "t") {
+		t.Fatalf("episode bindings = %#v", episode)
+	}
+
+	replace, ok := advancedSyntax(movie, "replace")
+	if !ok || replace.Description == "" || replace.ReturnType != "String" ||
+		replace.Syntax == "" || replace.Example == "" || len(replace.Parameters) != 2 {
+		t.Fatalf("replace syntax = %#v", replace)
+	}
+	if replace.Parameters[0].Name != "old" || replace.Parameters[0].Type != AdvancedTemplateString ||
+		!replace.Parameters[0].Required || replace.Parameters[1].Name != "new" ||
+		replace.Parameters[1].Type != AdvancedTemplateString || !replace.Parameters[1].Required {
+		t.Fatalf("replace parameters = %#v", replace.Parameters)
+	}
+
+	for _, method := range AdvancedTemplateMethods() {
+		if !hasAdvancedSyntax(movie, method) || !hasAdvancedSyntax(episode, method) {
+			t.Errorf("catalog is missing method %q", method)
+		}
+	}
+}
+
+func TestAdvancedTemplateCompletions(t *testing.T) {
+	tests := []struct {
+		name        string
+		kind        Kind
+		pattern     string
+		cursor      int
+		want        []string
+		replacement [2]int
+	}{
+		{
+			name: "movie bindings", kind: Movie, pattern: "{", cursor: 1,
+			want: []string{"n", "ny", "primaryTitle", "tmdbid", "y"}, replacement: [2]int{1, 1},
+		},
+		{
+			name: "episode-only binding", kind: Episode, pattern: "{t", cursor: 2,
+			want: []string{"t", "tmdbid"}, replacement: [2]int{1, 2},
+		},
+		{
+			name: "binding prefix", kind: Movie, pattern: "prefix {pr} suffix", cursor: 10,
+			want: []string{"primaryTitle"}, replacement: [2]int{8, 10},
+		},
+		{
+			name: "binding suffix", kind: Movie, pattern: "{primaryTitle}", cursor: 4,
+			want: []string{"primaryTitle"}, replacement: [2]int{1, 13},
+		},
+		{
+			name: "direct methods", kind: Movie, pattern: "{n.", cursor: 3,
+			want: AdvancedTemplateMethods(), replacement: [2]int{3, 3},
+		},
+		{
+			name: "integer methods", kind: Movie, pattern: "{y.", cursor: 3,
+			want:        []string{"default", "pad", "removeAll", "replace", "replaceAll", "roman"},
+			replacement: [2]int{3, 3},
+		},
+		{
+			name: "interpolation methods", kind: Movie, pattern: `{" ($y.`, cursor: len([]rune(`{" ($y.`)),
+			want:        []string{"default", "pad", "removeAll", "replace", "replaceAll", "roman"},
+			replacement: [2]int{len([]rune(`{" ($y.`)), len([]rune(`{" ($y.`))},
+		},
+		{
+			name: "chained method prefix", kind: Movie, pattern: `{n.space('.').re`, cursor: 16,
+			want: []string{"removeAll", "replace", "replaceAll"}, replacement: [2]int{14, 16},
+		},
+		{
+			name: "string literal", kind: Movie, pattern: `{n.replace('re`, cursor: 14,
+		},
+		{
+			name: "regular expression literal", kind: Movie, pattern: `{n.removeAll(/re`, cursor: 16,
+		},
+		{
+			name: "outside expression", kind: Movie, pattern: "movie", cursor: 5,
+		},
+		{
+			name: "invalid chain", kind: Movie, pattern: "{n.unknown().", cursor: 13,
+		},
+		{
+			name: "incompatible binding", kind: Movie, pattern: "{t.", cursor: 3,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := AdvancedTemplateCompletions(test.kind, test.pattern, test.cursor)
+			names := make([]string, len(got))
+			for index, completion := range got {
+				names[index] = completion.Name
+				if completion.Description == "" || completion.ReturnType == "" || completion.Example == "" {
+					t.Errorf("completion metadata = %#v", completion)
+				}
+				if completion.ReplaceStart != test.replacement[0] ||
+					completion.ReplaceEnd != test.replacement[1] {
+					t.Errorf("replacement = %d:%d, want %d:%d",
+						completion.ReplaceStart, completion.ReplaceEnd,
+						test.replacement[0], test.replacement[1])
+				}
+			}
+			if !slices.Equal(names, test.want) {
+				t.Fatalf("completions = %v, want %v", names, test.want)
+			}
+			if test.name == "integer methods" || test.name == "interpolation methods" {
+				prefix := "{y."
+				if test.name == "interpolation methods" {
+					prefix = `{"$y.`
+				}
+				for _, completion := range got {
+					if !strings.HasPrefix(completion.Syntax, prefix) {
+						t.Fatalf("completion example = %q, want prefix %q", completion.Syntax, prefix)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestAdvancedTemplateSignatureHelp(t *testing.T) {
+	tests := []struct {
+		name      string
+		kind      Kind
+		pattern   string
+		cursor    int
+		method    string
+		parameter int
+	}{
+		{
+			name: "first replace parameter", kind: Movie, pattern: `{n.replace(`, cursor: 11,
+			method: "replace", parameter: 0,
+		},
+		{
+			name: "second replace parameter", kind: Movie, pattern: `{n.replace('old', `, cursor: 18,
+			method: "replace", parameter: 1,
+		},
+		{
+			name: "optional pad parameter", kind: Movie, pattern: `{n.pad(20, `, cursor: 11,
+			method: "pad", parameter: 1,
+		},
+		{
+			name: "chained call", kind: Movie, pattern: `{n.trim().replace(`, cursor: 18,
+			method: "replace", parameter: 0,
+		},
+		{
+			name: "integer receiver", kind: Movie, pattern: `{y.replace(`, cursor: 11,
+			method: "replace", parameter: 0,
+		},
+		{
+			name: "interpolation receiver", kind: Movie,
+			pattern: `{" ($y.replace(`, cursor: len([]rune(`{" ($y.replace(`)),
+			method: "replace", parameter: 0,
+		},
+		{
+			name: "cursor inside string", kind: Movie, pattern: `{n.replace('old', 'new')}`, cursor: 22,
+			method: "replace", parameter: 1,
+		},
+		{name: "closed call", kind: Movie, pattern: `{n.replace('old', 'new')}`, cursor: 25},
+		{name: "grouping parentheses", kind: Movie, pattern: `{(n != "")`, cursor: 10},
+		{name: "unavailable receiver", kind: Movie, pattern: `{t.replace(`, cursor: 11},
+		{name: "unknown receiver", kind: Movie, pattern: `{bogus.replace(`, cursor: 15},
+		{name: "incompatible receiver", kind: Movie, pattern: `{y.acronym(`, cursor: 11},
+		{name: "too many arguments", kind: Movie, pattern: `{n.replace('a', 'b', `, cursor: 21},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := AdvancedTemplateSignatureHelp(test.kind, test.pattern, test.cursor)
+			if test.method == "" {
+				if got != nil {
+					t.Fatalf("signature = %#v, want nil", got)
+				}
+				return
+			}
+			if got == nil || got.Name != test.method || got.ActiveParameter != test.parameter {
+				t.Fatalf("signature = %#v, want %s parameter %d", got, test.method, test.parameter)
+			}
+			if got.Parameters[got.ActiveParameter].Description == "" {
+				t.Fatalf("active parameter has no description: %#v", got)
+			}
+		})
+	}
+}
+
+func hasAdvancedSyntax(items []AdvancedTemplateSyntax, name string) bool {
+	_, ok := advancedSyntax(items, name)
+	return ok
+}
+
+func advancedSyntax(items []AdvancedTemplateSyntax, name string) (AdvancedTemplateSyntax, bool) {
+	for _, item := range items {
+		if item.Name == name {
+			return item, true
+		}
+	}
+	return AdvancedTemplateSyntax{}, false
 }
 
 func TestValidatePattern(t *testing.T) {
