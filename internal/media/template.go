@@ -27,9 +27,28 @@ type templateData struct {
 	PrimaryTitle string
 }
 
+type AdvancedTemplateParameterType uint8
+
+const (
+	AdvancedTemplateString AdvancedTemplateParameterType = iota
+	AdvancedTemplateInteger
+	AdvancedTemplateRegularExpression
+)
+
+func (parameterType AdvancedTemplateParameterType) String() string {
+	switch parameterType {
+	case AdvancedTemplateInteger:
+		return "Integer"
+	case AdvancedTemplateRegularExpression:
+		return "Regular expression"
+	default:
+		return "String"
+	}
+}
+
 type AdvancedTemplateParameter struct {
 	Name        string
-	Type        string
+	Type        AdvancedTemplateParameterType
 	Required    bool
 	Description string
 }
@@ -228,7 +247,7 @@ var fileBotMethods = []fileBotMethod{
 			Name: "after", Syntax: `{n.after(': ')}`, Description: "Keep text after a separator",
 			Example: "Part Two", ReturnType: "String",
 			Parameters: []AdvancedTemplateParameter{
-				{Name: "separator", Type: "String", Required: true, Description: "Text that marks where the result starts."},
+				{Name: "separator", Type: AdvancedTemplateString, Required: true, Description: "Text that marks where the result starts."},
 			},
 		},
 		function: after,
@@ -238,7 +257,7 @@ var fileBotMethods = []fileBotMethod{
 			Name: "before", Syntax: `{n.before(': ')}`, Description: "Keep text before a separator",
 			Example: "Dune", ReturnType: "String",
 			Parameters: []AdvancedTemplateParameter{
-				{Name: "separator", Type: "String", Required: true, Description: "Text that marks where the result ends."},
+				{Name: "separator", Type: AdvancedTemplateString, Required: true, Description: "Text that marks where the result ends."},
 			},
 		},
 		function: before,
@@ -255,7 +274,7 @@ var fileBotMethods = []fileBotMethod{
 			Name: "colon", Syntax: `{n.colon(' - ')}`, Description: "Replace colons",
 			Example: "Dune - Part Two", ReturnType: "String",
 			Parameters: []AdvancedTemplateParameter{
-				{Name: "replacement", Type: "String", Required: true, Description: "Text that replaces each colon."},
+				{Name: "replacement", Type: AdvancedTemplateString, Required: true, Description: "Text that replaces each colon."},
 			},
 		},
 		function: func(replacement, value string) string { return strings.ReplaceAll(value, ":", replacement) },
@@ -265,7 +284,7 @@ var fileBotMethods = []fileBotMethod{
 			Name: "default", Syntax: `{primaryTitle.default('Unknown')}`, Description: "Use a fallback when a binding is unavailable",
 			Example: "Unknown", ReturnType: "String",
 			Parameters: []AdvancedTemplateParameter{
-				{Name: "fallback", Type: "String", Required: true, Description: "Value used when the binding is unavailable."},
+				{Name: "fallback", Type: AdvancedTemplateString, Required: true, Description: "Value used when the binding is unavailable."},
 			},
 		},
 		function: func(fallback, value string) string { return firstNonEmpty(value, fallback) }, allowsMissing: true,
@@ -296,8 +315,8 @@ var fileBotMethods = []fileBotMethod{
 			Name: "pad", Syntax: `{n.pad(20, '0')}`, Description: "Pad text on the left to a length",
 			Example: "000000Dune: Part Two", ReturnType: "String",
 			Parameters: []AdvancedTemplateParameter{
-				{Name: "length", Type: "Integer", Required: true, Description: "Minimum result length."},
-				{Name: "padding", Type: "String", Description: `Text used for padding; defaults to "0".`},
+				{Name: "length", Type: AdvancedTemplateInteger, Required: true, Description: "Minimum result length."},
+				{Name: "padding", Type: AdvancedTemplateString, Description: `Text used for padding; defaults to "0".`},
 			},
 		},
 		function: pad,
@@ -307,7 +326,7 @@ var fileBotMethods = []fileBotMethod{
 			Name: "removeAll", Syntax: `{n.removeAll(/[!?.]+$/)}`, Description: "Remove every regular-expression match",
 			Example: "Dune: Part Two", ReturnType: "String",
 			Parameters: []AdvancedTemplateParameter{
-				{Name: "pattern", Type: "Regular expression", Required: true, Description: "RE2 pattern to remove."},
+				{Name: "pattern", Type: AdvancedTemplateRegularExpression, Required: true, Description: "RE2 pattern to remove."},
 			},
 		},
 		function: removeAll, regexArgument: true,
@@ -317,8 +336,8 @@ var fileBotMethods = []fileBotMethod{
 			Name: "replace", Syntax: `{n.replace('Two', '2')}`, Description: "Replace literal text",
 			Example: "Dune: Part 2", ReturnType: "String",
 			Parameters: []AdvancedTemplateParameter{
-				{Name: "old", Type: "String", Required: true, Description: "Text to find."},
-				{Name: "new", Type: "String", Required: true, Description: "Replacement text."},
+				{Name: "old", Type: AdvancedTemplateString, Required: true, Description: "Text to find."},
+				{Name: "new", Type: AdvancedTemplateString, Required: true, Description: "Replacement text."},
 			},
 		},
 		function: func(old, new, value string) string { return strings.ReplaceAll(value, old, new) },
@@ -328,8 +347,8 @@ var fileBotMethods = []fileBotMethod{
 			Name: "replaceAll", Syntax: `{n.replaceAll(/Part/, 'Chapter')}`, Description: "Replace every regular-expression match",
 			Example: "Dune: Chapter Two", ReturnType: "String",
 			Parameters: []AdvancedTemplateParameter{
-				{Name: "pattern", Type: "Regular expression", Required: true, Description: "RE2 pattern to find."},
-				{Name: "replacement", Type: "String", Required: true, Description: "Replacement text."},
+				{Name: "pattern", Type: AdvancedTemplateRegularExpression, Required: true, Description: "RE2 pattern to find."},
+				{Name: "replacement", Type: AdvancedTemplateString, Required: true, Description: "Replacement text."},
 			},
 		},
 		function: replaceAll, regexArgument: true,
@@ -346,7 +365,7 @@ var fileBotMethods = []fileBotMethod{
 			Name: "slash", Syntax: `{n.slash('.')}`, Description: "Replace forward and backward slashes",
 			Example: "Dune.Part Two", ReturnType: "String",
 			Parameters: []AdvancedTemplateParameter{
-				{Name: "replacement", Type: "String", Required: true, Description: "Text that replaces each slash."},
+				{Name: "replacement", Type: AdvancedTemplateString, Required: true, Description: "Text that replaces each slash."},
 			},
 		},
 		function: replaceSlashes,
@@ -363,7 +382,7 @@ var fileBotMethods = []fileBotMethod{
 			Name: "space", Syntax: `{n.space('.')}`, Description: "Replace whitespace",
 			Example: "Dune:.Part.Two", ReturnType: "String",
 			Parameters: []AdvancedTemplateParameter{
-				{Name: "replacement", Type: "String", Required: true, Description: "Text that replaces each whitespace run."},
+				{Name: "replacement", Type: AdvancedTemplateString, Required: true, Description: "Text that replaces each whitespace run."},
 			},
 		},
 		function: func(replacement, value string) string { return whitespace.ReplaceAllString(value, replacement) },
@@ -440,7 +459,7 @@ func AdvancedTemplateCompletions(kind Kind, pattern string, cursor int) []Advanc
 			fileBotBindingSyntax(kind),
 			string(prefix),
 			start+1+prefixStart,
-			cursor,
+			advancedIdentifierEnd(runes, cursor),
 			false,
 		)
 	}
@@ -465,12 +484,55 @@ func AdvancedTemplateCompletions(kind Kind, pattern string, cursor int) []Advanc
 		fileBotMethodSyntax(),
 		string(expression[dot+1:]),
 		start+1+dot+1,
-		cursor,
+		advancedIdentifierEnd(runes, cursor),
 		true,
 	)
 }
 
-func AdvancedTemplateSignatureHelp(pattern string, cursor int) *AdvancedTemplateSignature {
+type advancedLiteralState struct {
+	quote   rune
+	regex   bool
+	escaped bool
+}
+
+func (state *advancedLiteralState) consume(character rune) bool {
+	if state.escaped {
+		state.escaped = false
+		return true
+	}
+	if state.quote != 0 {
+		if character == '\\' {
+			state.escaped = true
+		} else if character == state.quote {
+			state.quote = 0
+		}
+		return true
+	}
+	if state.regex {
+		if character == '\\' {
+			state.escaped = true
+		} else if character == '/' {
+			state.regex = false
+		}
+		return true
+	}
+	switch character {
+	case '\'', '"':
+		state.quote = character
+		return true
+	case '/':
+		state.regex = true
+		return true
+	default:
+		return false
+	}
+}
+
+func (state advancedLiteralState) active() bool {
+	return state.quote != 0 || state.regex
+}
+
+func AdvancedTemplateSignatureHelp(kind Kind, pattern string, cursor int) *AdvancedTemplateSignature {
 	runes := []rune(pattern)
 	start, _ := advancedExpressionAt(runes, cursor)
 	if start < 0 {
@@ -478,41 +540,21 @@ func AdvancedTemplateSignatureHelp(pattern string, cursor int) *AdvancedTemplate
 	}
 
 	type call struct {
-		name   string
-		commas int
+		name     string
+		receiver string
+		commas   int
 	}
 	var calls []call
-	var quote rune
-	regex, escaped := false, false
+	var literal advancedLiteralState
 	expression := runes[start+1 : cursor]
 	for index, character := range expression {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if quote != 0 {
-			if character == '\\' {
-				escaped = true
-			} else if character == quote {
-				quote = 0
-			}
-			continue
-		}
-		if regex {
-			if character == '\\' {
-				escaped = true
-			} else if character == '/' {
-				regex = false
-			}
+		if literal.consume(character) {
 			continue
 		}
 		switch character {
-		case '\'', '"':
-			quote = character
-		case '/':
-			regex = true
 		case '(':
-			calls = append(calls, call{name: advancedMethodBefore(expression, index)})
+			name, receiver := advancedMethodBefore(expression, index)
+			calls = append(calls, call{name: name, receiver: receiver})
 		case ')':
 			if len(calls) > 0 {
 				calls = calls[:len(calls)-1]
@@ -529,10 +571,12 @@ func AdvancedTemplateSignatureHelp(pattern string, cursor int) *AdvancedTemplate
 		if !ok {
 			continue
 		}
-		active := calls[index].commas
-		if len(method.Parameters) > 0 {
-			active = min(active, len(method.Parameters)-1)
+		tooManyArguments := len(method.Parameters) == 0 && calls[index].commas > 0 ||
+			len(method.Parameters) > 0 && calls[index].commas >= len(method.Parameters)
+		if !advancedReceiverAllowed(kind, calls[index].receiver) || tooManyArguments {
+			return nil
 		}
+		active := calls[index].commas
 		return &AdvancedTemplateSignature{
 			AdvancedTemplateSyntax: method.AdvancedTemplateSyntax,
 			ActiveParameter:        active,
@@ -546,8 +590,7 @@ func advancedExpressionAt(pattern []rune, cursor int) (int, bool) {
 		return -1, false
 	}
 	start := -1
-	var quote rune
-	regex, escaped := false, false
+	var literal advancedLiteralState
 	for index, character := range pattern[:cursor] {
 		if start < 0 {
 			if character == '{' {
@@ -555,68 +598,24 @@ func advancedExpressionAt(pattern []rune, cursor int) (int, bool) {
 			}
 			continue
 		}
-		if escaped {
-			escaped = false
+		if literal.consume(character) {
 			continue
 		}
-		if quote != 0 {
-			if character == '\\' {
-				escaped = true
-			} else if character == quote {
-				quote = 0
-			}
-			continue
-		}
-		if regex {
-			if character == '\\' {
-				escaped = true
-			} else if character == '/' {
-				regex = false
-			}
-			continue
-		}
-		switch character {
-		case '\'', '"':
-			quote = character
-		case '/':
-			regex = true
-		case '}':
+		if character == '}' {
 			start = -1
 		}
 	}
-	return start, quote != 0 || regex
+	return start, literal.active()
 }
 
 func advancedTopLevelDot(expression []rune) int {
 	dot, depth := -1, 0
-	var quote rune
-	regex, escaped := false, false
+	var literal advancedLiteralState
 	for index, character := range expression {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if quote != 0 {
-			if character == '\\' {
-				escaped = true
-			} else if character == quote {
-				quote = 0
-			}
-			continue
-		}
-		if regex {
-			if character == '\\' {
-				escaped = true
-			} else if character == '/' {
-				regex = false
-			}
+		if literal.consume(character) {
 			continue
 		}
 		switch character {
-		case '\'', '"':
-			quote = character
-		case '/':
-			regex = true
 		case '(':
 			depth++
 		case ')':
@@ -630,7 +629,7 @@ func advancedTopLevelDot(expression []rune) int {
 	return dot
 }
 
-func advancedMethodBefore(expression []rune, opening int) string {
+func advancedMethodBefore(expression []rune, opening int) (string, string) {
 	end := opening
 	for end > 0 && unicode.IsSpace(expression[end-1]) {
 		end--
@@ -644,9 +643,22 @@ func advancedMethodBefore(expression []rune, opening int) string {
 		dot--
 	}
 	if start == end || dot == 0 || expression[dot-1] != '.' {
-		return ""
+		return "", ""
 	}
-	return string(expression[start:end])
+	return string(expression[start:end]), strings.TrimSpace(string(expression[:dot-1]))
+}
+
+func advancedReceiverAllowed(kind Kind, receiver string) bool {
+	normalized, err := normalizeFileBotExpression(receiver)
+	if err != nil {
+		return false
+	}
+	node, err := parser.ParseExpr(normalized)
+	if err != nil {
+		return false
+	}
+	_, _, _, _, err = compileFileBotNode(kind, node)
+	return err == nil
 }
 
 func advancedIdentifier(value []rune) bool {
@@ -660,6 +672,13 @@ func advancedIdentifier(value []rune) bool {
 
 func advancedIdentifierRune(character rune) bool {
 	return character == '_' || unicode.IsLetter(character) || unicode.IsDigit(character)
+}
+
+func advancedIdentifierEnd(pattern []rune, cursor int) int {
+	for cursor < len(pattern) && advancedIdentifierRune(pattern[cursor]) {
+		cursor++
+	}
+	return cursor
 }
 
 func advancedCompletions(
@@ -1308,7 +1327,7 @@ func compileFileBotMethod(name string, arguments []fileBotArgument) (string, err
 		return "", fmt.Errorf("%s expects %d to %d arguments", name, required, len(method.Parameters))
 	}
 	for index, argument := range arguments {
-		integer := method.Parameters[index].Type == "Integer"
+		integer := method.Parameters[index].Type == AdvancedTemplateInteger
 		if integer != argument.number {
 			return "", fmt.Errorf("%s argument %s expects %s", name, method.Parameters[index].Name, method.Parameters[index].Type)
 		}

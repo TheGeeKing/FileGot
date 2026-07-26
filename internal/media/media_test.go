@@ -264,9 +264,9 @@ func TestAdvancedTemplateCatalog(t *testing.T) {
 		replace.Syntax == "" || replace.Example == "" || len(replace.Parameters) != 2 {
 		t.Fatalf("replace syntax = %#v", replace)
 	}
-	if replace.Parameters[0].Name != "old" || replace.Parameters[0].Type != "String" ||
+	if replace.Parameters[0].Name != "old" || replace.Parameters[0].Type != AdvancedTemplateString ||
 		!replace.Parameters[0].Required || replace.Parameters[1].Name != "new" ||
-		replace.Parameters[1].Type != "String" || !replace.Parameters[1].Required {
+		replace.Parameters[1].Type != AdvancedTemplateString || !replace.Parameters[1].Required {
 		t.Fatalf("replace parameters = %#v", replace.Parameters)
 	}
 
@@ -297,6 +297,10 @@ func TestAdvancedTemplateCompletions(t *testing.T) {
 		{
 			name: "binding prefix", kind: Movie, pattern: "prefix {pr} suffix", cursor: 10,
 			want: []string{"primaryTitle"}, replacement: [2]int{8, 10},
+		},
+		{
+			name: "binding suffix", kind: Movie, pattern: "{primaryTitle}", cursor: 4,
+			want: []string{"primaryTitle"}, replacement: [2]int{1, 13},
 		},
 		{
 			name: "direct methods", kind: Movie, pattern: "{n.", cursor: 3,
@@ -349,38 +353,42 @@ func TestAdvancedTemplateCompletions(t *testing.T) {
 func TestAdvancedTemplateSignatureHelp(t *testing.T) {
 	tests := []struct {
 		name      string
+		kind      Kind
 		pattern   string
 		cursor    int
 		method    string
 		parameter int
 	}{
 		{
-			name: "first replace parameter", pattern: `{n.replace(`, cursor: 11,
+			name: "first replace parameter", kind: Movie, pattern: `{n.replace(`, cursor: 11,
 			method: "replace", parameter: 0,
 		},
 		{
-			name: "second replace parameter", pattern: `{n.replace('old', `, cursor: 18,
+			name: "second replace parameter", kind: Movie, pattern: `{n.replace('old', `, cursor: 18,
 			method: "replace", parameter: 1,
 		},
 		{
-			name: "optional pad parameter", pattern: `{n.pad(20, `, cursor: 11,
+			name: "optional pad parameter", kind: Movie, pattern: `{n.pad(20, `, cursor: 11,
 			method: "pad", parameter: 1,
 		},
 		{
-			name: "chained call", pattern: `{n.trim().replace(`, cursor: 18,
+			name: "chained call", kind: Movie, pattern: `{n.trim().replace(`, cursor: 18,
 			method: "replace", parameter: 0,
 		},
 		{
-			name: "cursor inside string", pattern: `{n.replace('old', 'new')}`, cursor: 22,
+			name: "cursor inside string", kind: Movie, pattern: `{n.replace('old', 'new')}`, cursor: 22,
 			method: "replace", parameter: 1,
 		},
-		{name: "closed call", pattern: `{n.replace('old', 'new')}`, cursor: 25},
-		{name: "grouping parentheses", pattern: `{(n != "")`, cursor: 10},
+		{name: "closed call", kind: Movie, pattern: `{n.replace('old', 'new')}`, cursor: 25},
+		{name: "grouping parentheses", kind: Movie, pattern: `{(n != "")`, cursor: 10},
+		{name: "unavailable receiver", kind: Movie, pattern: `{t.replace(`, cursor: 11},
+		{name: "unknown receiver", kind: Movie, pattern: `{bogus.replace(`, cursor: 15},
+		{name: "too many arguments", kind: Movie, pattern: `{n.replace('a', 'b', `, cursor: 21},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := AdvancedTemplateSignatureHelp(test.pattern, test.cursor)
+			got := AdvancedTemplateSignatureHelp(test.kind, test.pattern, test.cursor)
 			if test.method == "" {
 				if got != nil {
 					t.Fatalf("signature = %#v, want nil", got)

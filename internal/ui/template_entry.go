@@ -21,6 +21,7 @@ type advancedTemplateEntry struct {
 	selected          int
 	signature         *media.AdvancedTemplateSignature
 	popup             *widget.PopUp
+	completionScroll  *container.Scroll
 	completionButtons []*widget.Button
 	signatureLabel    *widget.Label
 	dismissed         bool
@@ -110,7 +111,7 @@ func (entry *advancedTemplateEntry) refreshAssist() {
 		return
 	}
 
-	entry.signature = media.AdvancedTemplateSignatureHelp(entry.Text, cursor)
+	entry.signature = media.AdvancedTemplateSignatureHelp(entry.kind, entry.Text, cursor)
 	if entry.signature != nil {
 		entry.showSignature()
 		return
@@ -138,12 +139,12 @@ func (entry *advancedTemplateEntry) showCompletions() {
 		entry.completionButtons[index] = button
 		rows[index] = button
 	}
-	entry.selectCompletion(0)
-
 	scroll := container.NewVScroll(container.NewVBox(rows...))
 	height := float32(min(len(rows)*56, 280))
 	scroll.SetMinSize(fyne.NewSize(620, height))
+	entry.completionScroll = scroll
 	entry.showPopup(scroll, fyne.NewSize(620, height))
+	entry.selectCompletion(0)
 }
 
 func (entry *advancedTemplateEntry) showSignature() {
@@ -155,7 +156,7 @@ func (entry *advancedTemplateEntry) showSignature() {
 		if !parameter.Required {
 			optional = "?"
 		}
-		parameters[index] = parameter.Name + optional + ": " + parameter.Type
+		parameters[index] = parameter.Name + optional + ": " + parameter.Type.String()
 	}
 	title := widget.NewLabel(fmt.Sprintf(
 		"%s(%s)  → %s",
@@ -212,6 +213,27 @@ func (entry *advancedTemplateEntry) selectCompletion(index int) {
 		}
 		button.Refresh()
 	}
+	entry.scrollCompletionIntoView(index)
+}
+
+func (entry *advancedTemplateEntry) scrollCompletionIntoView(index int) {
+	if entry.completionScroll == nil || index < 0 || index >= len(entry.completionButtons) {
+		return
+	}
+	button := entry.completionButtons[index]
+	top := button.Position().Y
+	bottom := top + button.Size().Height
+	offset := entry.completionScroll.Offset
+	viewportBottom := offset.Y + entry.completionScroll.Size().Height
+	switch {
+	case top < offset.Y:
+		offset.Y = top
+	case bottom > viewportBottom:
+		offset.Y = bottom - entry.completionScroll.Size().Height
+	default:
+		return
+	}
+	entry.completionScroll.ScrollToOffset(offset)
 }
 
 func (entry *advancedTemplateEntry) acceptCompletion(index int) {
@@ -253,5 +275,6 @@ func (entry *advancedTemplateEntry) hidePopup() {
 		entry.popup = nil
 	}
 	entry.completionButtons = nil
+	entry.completionScroll = nil
 	entry.signatureLabel = nil
 }

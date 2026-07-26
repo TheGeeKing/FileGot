@@ -624,6 +624,15 @@ func TestAdvancedTemplateEntryAcceptsAndDismissesCompletions(t *testing.T) {
 		t.Fatal("completion popup should show return type and compact example")
 	}
 
+	for range 8 {
+		entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyDown})
+	}
+	if entry.completionScroll == nil || entry.completionScroll.Offset.Y == 0 {
+		t.Fatal("keyboard navigation should scroll the selected completion into view")
+	}
+	for range 8 {
+		entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyUp})
+	}
 	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyDown})
 	entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEnter})
 	if entry.Text != "{n.after()" || entry.CursorTextOffset() != len([]rune("{n.after(")) {
