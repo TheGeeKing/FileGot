@@ -3,14 +3,17 @@ package ui
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/thegeeking/FileGot/internal/matcher"
@@ -28,19 +31,23 @@ type Application struct {
 
 	files    []media.File
 	table    *widget.Table
+	empty    fyne.CanvasObject
 	status   *widget.Label
+	details  *widget.Label
 	selected int
 	cancel   context.CancelFunc
 	busy     bool
 
-	addFileButton   *widget.Button
-	addFolderButton *widget.Button
-	removeButton    *widget.Button
-	clearButton     *widget.Button
-	matchButton     *widget.Button
-	reviewButton    *widget.Button
-	renameButton    *widget.Button
-	undoButton      *widget.Button
+	addFileButton        *widget.Button
+	addFolderButton      *widget.Button
+	emptyAddFileButton   *widget.Button
+	emptyAddFolderButton *widget.Button
+	removeButton         *widget.Button
+	clearButton          *widget.Button
+	matchButton          *widget.Button
+	reviewButton         *widget.Button
+	renameButton         *widget.Button
+	undoButton           *widget.Button
 }
 
 func New(app fyne.App, store *settings.Store, renamer *rename.Manager) *Application {
@@ -80,76 +87,121 @@ func (application *Application) Run() {
 func (application *Application) build() {
 	application.table = widget.NewTable(
 		func() (int, int) { return len(application.files) + 1, 3 },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func() fyne.CanvasObject {
+			background := canvas.NewRectangle(color.Transparent)
+			label := widget.NewLabel("")
+			label.SizeName = theme.SizeNameCaptionText
+			label.Truncation = fyne.TextTruncateEllipsis
+			return container.NewStack(background, label)
+		},
 		func(id widget.TableCellID, object fyne.CanvasObject) {
-			label := object.(*widget.Label)
+			cell := object.(*fyne.Container)
+			background := cell.Objects[0].(*canvas.Rectangle)
+			label := cell.Objects[1].(*widget.Label)
 			label.TextStyle = fyne.TextStyle{Bold: id.Row == 0}
 			if id.Row == 0 {
+				background.FillColor = theme.ColorForWidget(theme.ColorNameHeaderBackground, application.table)
+				background.Refresh()
 				label.SetText([]string{"Original File", "Status", "Proposed Name"}[id.Col])
 				return
 			}
 			file := application.files[id.Row-1]
+			if id.Row-1 == application.selected {
+				background.FillColor = theme.ColorForWidget(theme.ColorNameSelection, application.table)
+			} else {
+				background.FillColor = statusRowColor(
+					file.Status,
+					theme.ColorForWidget(theme.ColorNameBackground, application.table),
+				)
+			}
+			background.Refresh()
 			switch id.Col {
 			case 0:
 				label.SetText(filepath.Base(file.Path))
 			case 1:
-				status := string(file.Status)
-				if file.Message != "" {
-					status += " — " + file.Message
-				}
-				label.SetText(status)
+				label.SetText(string(file.Status))
 			case 2:
 				label.SetText(file.Proposed)
 			}
 		},
 	)
-	application.table.SetColumnWidth(0, 390)
-	application.table.SetColumnWidth(1, 270)
-	application.table.SetColumnWidth(2, 390)
+	application.table.StickyRowCount = 1
 	application.table.OnSelected = func(id widget.TableCellID) {
 		if id.Row == 0 {
 			application.table.Unselect(id)
 			return
 		}
 		application.selected = id.Row - 1
+		application.table.Refresh()
+		application.updateDetails()
 		application.updateButtons()
 	}
 	application.table.OnUnselected = func(widget.TableCellID) {
 		application.selected = -1
+		application.table.Refresh()
+		application.updateDetails()
 		application.updateButtons()
 	}
 
-	application.addFileButton = widget.NewButton("Add File", application.addFile)
-	application.addFolderButton = widget.NewButton("Add Folder", application.addFolder)
-	application.removeButton = widget.NewButton("Remove", application.removeSelected)
-	application.clearButton = widget.NewButton("Clear", application.clear)
-	application.matchButton = widget.NewButton("Match", application.matchOrCancel)
-	application.reviewButton = widget.NewButton("Review", application.reviewSelected)
-	application.renameButton = widget.NewButton("Rename", application.confirmRename)
-	application.undoButton = widget.NewButton("Undo Last", application.undo)
-	settingsButton := widget.NewButton("Settings", func() {
+	application.addFileButton = widget.NewButtonWithIcon("Add File", theme.FileIcon(), application.addFile)
+	application.addFolderButton = widget.NewButtonWithIcon("Add Folder", theme.FolderOpenIcon(), application.addFolder)
+	application.removeButton = widget.NewButtonWithIcon("Remove", theme.ContentRemoveIcon(), application.removeSelected)
+	application.clearButton = widget.NewButtonWithIcon("Clear", theme.ContentClearIcon(), application.clear)
+	application.matchButton = widget.NewButtonWithIcon("Match", theme.SearchIcon(), application.matchOrCancel)
+	application.reviewButton = widget.NewButtonWithIcon("Review", theme.VisibilityIcon(), application.reviewSelected)
+	application.renameButton = widget.NewButtonWithIcon("Rename", theme.ConfirmIcon(), application.confirmRename)
+	application.renameButton.Importance = widget.HighImportance
+	application.undoButton = widget.NewButtonWithIcon("Undo Last", theme.ContentUndoIcon(), application.undo)
+	showSettings := func() {
 		ShowSettings(application.app, application.settings, func() {
 			application.setStatus("Settings saved.")
 			application.refresh()
 		})
-	})
-	aboutButton := widget.NewButton("About", func() { ShowAbout(application.window) })
+	}
+	application.window.SetMainMenu(fyne.NewMainMenu(
+		fyne.NewMenu("File", fyne.NewMenuItemWithIcon("Settings", theme.SettingsIcon(), showSettings)),
+		fyne.NewMenu("Help", fyne.NewMenuItemWithIcon("About", theme.InfoIcon(), func() {
+			ShowAbout(application.window)
+		})),
+	))
 
 	toolbar := container.NewHScroll(container.NewHBox(
 		application.addFileButton,
 		application.addFolderButton,
+		widget.NewSeparator(),
 		application.removeButton,
 		application.clearButton,
+		widget.NewSeparator(),
 		application.matchButton,
 		application.reviewButton,
 		application.renameButton,
+		widget.NewSeparator(),
 		application.undoButton,
-		settingsButton,
-		aboutButton,
 	))
 	application.status = widget.NewLabel("Drop video files or a folder to begin.")
 	application.status.Wrapping = fyne.TextWrapWord
-	application.window.SetContent(container.NewBorder(toolbar, application.status, nil, nil, application.table))
+	application.details = widget.NewLabel("")
+	application.details.Selectable = true
+	application.details.Wrapping = fyne.TextWrapBreak
+	application.details.Hide()
+	footer := container.NewVBox(application.details, application.status)
+	tableArea := container.New(&fileTableLayout{table: application.table}, application.table)
+	application.emptyAddFileButton = widget.NewButtonWithIcon("Add File", theme.FileIcon(), application.addFile)
+	application.emptyAddFolderButton = widget.NewButtonWithIcon("Add Folder", theme.FolderOpenIcon(), application.addFolder)
+	emptyTitle := widget.NewLabelWithStyle(
+		"Drop video files or a folder here",
+		fyne.TextAlignCenter,
+		fyne.TextStyle{Bold: true},
+	)
+	emptyHint := widget.NewLabel("or choose a source to build the rename preview")
+	emptyHint.Alignment = fyne.TextAlignCenter
+	emptyActions := container.NewCenter(container.NewHBox(
+		application.emptyAddFileButton,
+		application.emptyAddFolderButton,
+	))
+	application.empty = container.NewCenter(container.NewVBox(emptyTitle, emptyHint, emptyActions))
+	fileArea := container.NewStack(tableArea, application.empty)
+	application.window.SetContent(container.NewBorder(toolbar, footer, nil, nil, fileArea))
 	application.window.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
 		paths := make([]string, 0, len(uris))
 		for _, uri := range uris {
@@ -164,6 +216,7 @@ func (application *Application) build() {
 			application.cancel()
 		}
 	})
+	application.updateFileArea()
 	application.updateButtons()
 }
 
@@ -519,12 +572,16 @@ func (application *Application) canRename() bool {
 
 func (application *Application) refresh() {
 	application.table.Refresh()
+	application.updateFileArea()
+	application.updateDetails()
 	application.updateButtons()
 }
 
 func (application *Application) updateButtons() {
 	setEnabled(application.addFileButton, !application.busy)
 	setEnabled(application.addFolderButton, !application.busy)
+	setEnabled(application.emptyAddFileButton, !application.busy)
+	setEnabled(application.emptyAddFolderButton, !application.busy)
 	setEnabled(application.removeButton, !application.busy && application.selected >= 0)
 	setEnabled(application.clearButton, !application.busy && len(application.files) > 0)
 	canReview := !application.busy && application.selected >= 0 &&
@@ -540,6 +597,32 @@ func (application *Application) updateButtons() {
 		application.matchButton.SetText("Match")
 		setEnabled(application.matchButton, !application.busy && len(application.files) > 0)
 	}
+}
+
+func (application *Application) updateFileArea() {
+	if len(application.files) == 0 {
+		application.table.Hide()
+		application.empty.Show()
+		return
+	}
+	application.empty.Hide()
+	application.table.Show()
+}
+
+func (application *Application) updateDetails() {
+	if application.selected < 0 || application.selected >= len(application.files) {
+		application.details.Hide()
+		application.window.Content().Refresh()
+		return
+	}
+	file := application.files[application.selected]
+	details := file.Path + " — " + string(file.Status)
+	if file.Message != "" {
+		details += " — " + file.Message
+	}
+	application.details.SetText(details)
+	application.details.Show()
+	application.window.Content().Refresh()
 }
 
 func (application *Application) setStatus(value string) {
@@ -616,4 +699,66 @@ func optionalNumber(value int) string {
 		return ""
 	}
 	return strconv.Itoa(value)
+}
+
+func statusRowColor(status media.Status, background color.Color) color.Color {
+	dark := isDarkColor(background)
+	switch status {
+	case media.Ready:
+		if dark {
+			return color.NRGBA{R: 0x17, G: 0x3c, B: 0x2b, A: 0xff}
+		}
+		return color.NRGBA{R: 0xe9, G: 0xf7, B: 0xef, A: 0xff}
+	case media.Review, media.Unmatched:
+		if dark {
+			return color.NRGBA{R: 0x47, G: 0x38, B: 0x17, A: 0xff}
+		}
+		return color.NRGBA{R: 0xff, G: 0xf4, B: 0xd6, A: 0xff}
+	case media.Conflict, media.Error:
+		if dark {
+			return color.NRGBA{R: 0x48, G: 0x24, B: 0x24, A: 0xff}
+		}
+		return color.NRGBA{R: 0xfc, G: 0xe8, B: 0xe6, A: 0xff}
+	case media.Unsupported:
+		if dark {
+			return color.NRGBA{R: 0x2d, G: 0x30, B: 0x35, A: 0xff}
+		}
+		return color.NRGBA{R: 0xef, G: 0xf1, B: 0xf3, A: 0xff}
+	default:
+		return color.Transparent
+	}
+}
+
+func isDarkColor(value color.Color) bool {
+	red, green, blue, _ := value.RGBA()
+	return (red*299+green*587+blue*114)/1000 < 0x8000
+}
+
+type fileTableLayout struct {
+	table *widget.Table
+}
+
+func (layout *fileTableLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	if len(objects) == 0 {
+		return
+	}
+	statusWidth := fileStatusColumnWidth()
+	separators := theme.Padding() * 2
+	filenameWidth := max((size.Width-statusWidth-separators)/2, 220)
+	layout.table.SetColumnWidth(0, filenameWidth)
+	layout.table.SetColumnWidth(1, statusWidth)
+	layout.table.SetColumnWidth(2, filenameWidth)
+	objects[0].Resize(size)
+}
+
+func (layout *fileTableLayout) MinSize([]fyne.CanvasObject) fyne.Size {
+	return fyne.NewSize(440+fileStatusColumnWidth()+theme.Padding()*2, 220)
+}
+
+func fileStatusColumnWidth() float32 {
+	status := widget.NewLabel(string(media.Unsupported))
+	status.SizeName = theme.SizeNameCaptionText
+	header := widget.NewLabelWithStyle("Status", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	header.SizeName = theme.SizeNameCaptionText
+	return max(status.MinSize().Width, header.MinSize().Width) + theme.Padding()*2
 }
