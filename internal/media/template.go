@@ -212,8 +212,110 @@ var technicalBindingNames = []string{
 }
 
 func AdvancedTemplateUsesTechnicalMetadata(pattern string) bool {
+	for start := 0; start < len(pattern); {
+		open := strings.IndexByte(pattern[start:], '{')
+		if open < 0 {
+			return false
+		}
+		open += start
+		end, err := fileBotExpressionEnd(pattern, open+1)
+		if err != nil {
+			return false
+		}
+		if technicalExpression(pattern[open+1 : end]) {
+			return true
+		}
+		start = end + 1
+	}
+	return false
+}
+
+func technicalExpression(expression string) bool {
+	var quote byte
+	regexLiteral := false
+	escaped := false
+	for index := 0; index < len(expression); {
+		character := expression[index]
+		if escaped {
+			escaped = false
+			index++
+			continue
+		}
+		if quote != 0 {
+			if character == '\\' {
+				escaped = true
+				index++
+				continue
+			}
+			if character == quote {
+				quote = 0
+				index++
+				continue
+			}
+			if character == '$' {
+				name, end := interpolationName(expression, index+1)
+				if technicalBindingName(name) {
+					return true
+				}
+				index = end
+				continue
+			}
+			index++
+			continue
+		}
+		if regexLiteral {
+			if character == '\\' {
+				escaped = true
+			} else if character == '/' {
+				regexLiteral = false
+			}
+			index++
+			continue
+		}
+		switch character {
+		case '\'', '"':
+			quote = character
+			index++
+		case '/':
+			regexLiteral = true
+			index++
+		default:
+			if !isIdentifierStart(character) {
+				index++
+				continue
+			}
+			end := index + 1
+			for end < len(expression) && isIdentifierPart(expression[end]) {
+				end++
+			}
+			if technicalBindingName(expression[index:end]) {
+				return true
+			}
+			index = end
+		}
+	}
+	return false
+}
+
+func interpolationName(value string, start int) (string, int) {
+	if start < len(value) && value[start] == '{' {
+		end := strings.IndexByte(value[start+1:], '}')
+		if end < 0 {
+			return "", len(value)
+		}
+		end += start + 1
+		return value[start+1 : end], end + 1
+	}
+	end := start
+	for end < len(value) && isIdentifierPart(value[end]) {
+		end++
+	}
+	return value[start:end], end
+}
+
+func technicalBindingName(name string) bool {
 	for _, binding := range fileBotBindings[Movie] {
-		if binding.metadata && regexp.MustCompile(`\b`+regexp.QuoteMeta(binding.Name)+`\b`).MatchString(pattern) {
+		if binding.metadata && binding.Name == name {
 			return true
 		}
 	}

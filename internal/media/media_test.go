@@ -600,3 +600,20 @@ func TestAdvancedTechnicalBindingRequiresMetadata(t *testing.T) {
 		t.Fatalf("missing metadata error = %v", err)
 	}
 }
+
+func TestTechnicalMetadataDetectionIgnoresLiterals(t *testing.T) {
+	for _, pattern := range []string{
+		`{n.replace('video', 'film')}`,
+		`{n}{" HDR"}`,
+		`Movie ar`,
+	} {
+		if AdvancedTemplateUsesTechnicalMetadata(pattern) {
+			t.Errorf("ordinary pattern %q requires MediaInfo", pattern)
+		}
+	}
+	for _, pattern := range []string{`{vf}`, `{" [$hdr]"}`, `{video[0]["Format Profile"]}`} {
+		if !AdvancedTemplateUsesTechnicalMetadata(pattern) {
+			t.Errorf("technical pattern %q does not require MediaInfo", pattern)
+		}
+	}
+}
