@@ -17,6 +17,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	value.TMDBToken = "token"
 	value.Language = "fr-FR"
 	value.MoviePattern = "{title}.{year}"
+	value.MediaInfoExecutable = `C:\Tools\MediaInfo.exe`
 	value.IncludeSpecials = false
 	value.SortMatchedByStatus = true
 	if err := store.Save(value); err != nil {

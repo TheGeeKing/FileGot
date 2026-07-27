@@ -22,6 +22,7 @@ import (
 
 	"github.com/TheGeeKing/FileGot/internal/matcher"
 	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/mediainfo"
 	"github.com/TheGeeKing/FileGot/internal/rename"
 	"github.com/TheGeeKing/FileGot/internal/settings"
 	"github.com/TheGeeKing/FileGot/internal/tmdb"
@@ -50,13 +51,14 @@ type Application struct {
 	cancel          context.CancelFunc
 	busy            bool
 
-	importShowButton *widget.Button
-	removeButton     *widget.Button
-	clearButton      *widget.Button
-	matchButton      *widget.Button
-	reviewButton     *widget.Button
-	renameButton     *widget.Button
-	undoButton       *widget.Button
+	importShowButton   *widget.Button
+	removeButton       *widget.Button
+	clearButton        *widget.Button
+	matchButton        *widget.Button
+	reviewButton       *widget.Button
+	mediaDetailsButton *widget.Button
+	renameButton       *widget.Button
+	undoButton         *widget.Button
 }
 
 func New(app fyne.App, store *settings.Store, renamer *rename.Manager) *Application {
@@ -171,6 +173,7 @@ func (application *Application) build() {
 	application.clearButton = widget.NewButtonWithIcon("Clear", theme.ContentClearIcon(), application.clear)
 	application.matchButton = widget.NewButtonWithIcon("Match", theme.SearchIcon(), application.matchOrCancel)
 	application.reviewButton = widget.NewButtonWithIcon("Review", theme.VisibilityIcon(), application.reviewSelected)
+	application.mediaDetailsButton = widget.NewButtonWithIcon("Media Details", theme.InfoIcon(), application.showMediaDetails)
 	application.renameButton = widget.NewButtonWithIcon("Rename", theme.ConfirmIcon(), application.confirmRename)
 	application.renameButton.Importance = widget.HighImportance
 	application.undoButton = widget.NewButtonWithIcon("Undo Last", theme.ContentUndoIcon(), application.undo)
@@ -205,6 +208,7 @@ func (application *Application) build() {
 		widget.NewSeparator(),
 		application.matchButton,
 		application.reviewButton,
+		application.mediaDetailsButton,
 		application.renameButton,
 		widget.NewSeparator(),
 		application.undoButton,
@@ -750,7 +754,7 @@ func unpairedExpected(file media.File, options settings.Settings) (media.File, e
 }
 
 func pairEpisode(local, expected media.File, options settings.Settings) (media.File, error) {
-	proposed, err := options.FormatName(local.Path, expected.Candidate)
+	proposed, err := options.FormatNameWithMetadata(local.Path, expected.Candidate, local.Technical)
 	if err != nil {
 		return media.File{}, err
 	}
@@ -1205,7 +1209,7 @@ func (application *Application) refreshProposedNames() error {
 		if !file.Imported {
 			continue
 		}
-		proposed, err := options.FormatName(file.Path, file.Candidate)
+		proposed, err := options.FormatNameWithMetadata(file.Path, file.Candidate, file.Technical)
 		if err != nil {
 			return err
 		}
@@ -1259,6 +1263,7 @@ func (application *Application) updateButtons() {
 	setEnabled(application.removeButton, application.canRemove())
 	setEnabled(application.clearButton, !application.busy && len(application.files) > 0)
 	setEnabled(application.reviewButton, application.canReview())
+	setEnabled(application.mediaDetailsButton, application.canShowMediaDetails())
 	setEnabled(application.renameButton, application.canRename())
 	setEnabled(application.undoButton, !application.busy && application.renamer.HasUndo())
 
@@ -1269,6 +1274,84 @@ func (application *Application) updateButtons() {
 		application.matchButton.SetText("Match")
 		setEnabled(application.matchButton, !application.busy && len(application.files) > 0)
 	}
+}
+
+func (application *Application) canShowMediaDetails() bool {
+	return !application.busy && application.selected >= 0 && application.selected < len(application.files) &&
+		application.files[application.selected].Path != ""
+}
+
+func (application *Application) showMediaDetails() {
+	if !application.canShowMediaDetails() {
+		return
+	}
+	index := application.selected
+	path := application.files[index].Path
+	options := application.settings.Load()
+	ctx, cancel := context.WithCancel(context.Background())
+	application.cancel = cancel
+	application.busy = true
+	application.setStatus("Reading MediaInfo…")
+	application.updateButtons()
+	go func() {
+		technical, err := mediainfo.Probe(ctx, options.MediaInfoExecutable, path)
+		fyne.Do(func() {
+			application.busy = false
+			application.cancel = nil
+			application.updateButtons()
+			if err != nil {
+				application.setStatus("MediaInfo failed.")
+				dialog.ShowError(err, application.window)
+				return
+			}
+			if index < len(application.files) && application.files[index].Path == path {
+				application.files[index].Technical = technical
+			}
+			application.setStatus("MediaInfo loaded.")
+			text := widget.NewMultiLineEntry()
+			text.SetText(formatTechnicalDetails(technical))
+			text.Disable()
+			text.Wrapping = fyne.TextWrapOff
+			content := container.NewScroll(text)
+			content.SetMinSize(fyne.NewSize(760, 500))
+			dialog.ShowCustom("Media Details", "Close", content, application.window)
+		})
+	}()
+}
+
+func formatTechnicalDetails(technical mediainfo.Metadata) string {
+	var output strings.Builder
+	writeMap := func(name string, values map[string]string) {
+		if len(values) == 0 {
+			return
+		}
+		output.WriteString(name)
+		output.WriteByte('\n')
+		keys := make([]string, 0, len(values))
+		for key := range values {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Fprintf(&output, "%s: %s\n", key, values[key])
+		}
+		output.WriteByte('\n')
+	}
+	writeMap("Bindings", technical.Bindings)
+	writeMap("Media", technical.Media)
+	for index, values := range technical.Video {
+		writeMap(fmt.Sprintf("Video %d", index), values)
+	}
+	for index, values := range technical.Audio {
+		writeMap(fmt.Sprintf("Audio %d", index), values)
+	}
+	for index, values := range technical.Text {
+		writeMap(fmt.Sprintf("Text %d", index), values)
+	}
+	writeMap("Chapters", technical.Chapters)
+	writeMap("Image", technical.Image)
+	writeMap("Menu", technical.Menu)
+	return strings.TrimSpace(output.String())
 }
 
 func (application *Application) canReview() bool {

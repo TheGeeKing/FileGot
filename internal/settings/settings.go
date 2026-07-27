@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 
 	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/mediainfo"
 )
 
 const (
@@ -30,6 +31,7 @@ type Settings struct {
 	Language            string
 	PreferOriginalTitle bool
 	IncludeAdult        bool
+	MediaInfoExecutable string
 	NamingMode          string
 	MoviePattern        string
 	EpisodePattern      string
@@ -54,17 +56,18 @@ func NewStore(preferences fyne.Preferences) *Store {
 func Defaults() Settings {
 	movie, episode := Preset(PresetClean)
 	return Settings{
-		Language:        "en-US",
-		NamingMode:      NamingSimple,
-		MoviePattern:    movie,
-		EpisodePattern:  episode,
-		MovieTemplate:   defaultMovieTemplate,
-		EpisodeTemplate: defaultEpisodeTemplate,
-		ScanSubfolders:  true,
-		AutoMatch:       true,
-		IncludeSpecials: true,
-		ConfirmRename:   true,
-		IgnoreHidden:    true,
+		Language:            "en-US",
+		MediaInfoExecutable: "mediainfo",
+		NamingMode:          NamingSimple,
+		MoviePattern:        movie,
+		EpisodePattern:      episode,
+		MovieTemplate:       defaultMovieTemplate,
+		EpisodeTemplate:     defaultEpisodeTemplate,
+		ScanSubfolders:      true,
+		AutoMatch:           true,
+		IncludeSpecials:     true,
+		ConfirmRename:       true,
+		IgnoreHidden:        true,
 	}
 }
 
@@ -97,6 +100,7 @@ func (store *Store) Load() Settings {
 		Language:            prefs.StringWithFallback("tmdb.language", defaults.Language),
 		PreferOriginalTitle: prefs.BoolWithFallback("tmdb.prefer_original_title", defaults.PreferOriginalTitle),
 		IncludeAdult:        prefs.BoolWithFallback("tmdb.include_adult", defaults.IncludeAdult),
+		MediaInfoExecutable: prefs.StringWithFallback("mediainfo.executable", defaults.MediaInfoExecutable),
 		NamingMode:          prefs.StringWithFallback("naming.mode", defaults.NamingMode),
 		MoviePattern:        prefs.StringWithFallback("naming.movie", defaults.MoviePattern),
 		EpisodePattern:      prefs.StringWithFallback("naming.episode", defaults.EpisodePattern),
@@ -143,6 +147,7 @@ func (store *Store) Save(value Settings) error {
 	prefs.SetString("tmdb.language", value.Language)
 	prefs.SetBool("tmdb.prefer_original_title", value.PreferOriginalTitle)
 	prefs.SetBool("tmdb.include_adult", value.IncludeAdult)
+	prefs.SetString("mediainfo.executable", strings.TrimSpace(value.MediaInfoExecutable))
 	prefs.SetString("naming.mode", value.NamingMode)
 	prefs.SetString("naming.movie", value.MoviePattern)
 	prefs.SetString("naming.episode", value.EpisodePattern)
@@ -158,6 +163,14 @@ func (store *Store) Save(value Settings) error {
 }
 
 func (value Settings) FormatName(originalPath string, candidate media.Candidate) (string, error) {
+	return value.FormatNameWithMetadata(originalPath, candidate, mediainfo.Metadata{})
+}
+
+func (value Settings) FormatNameWithMetadata(
+	originalPath string,
+	candidate media.Candidate,
+	technical mediainfo.Metadata,
+) (string, error) {
 	pattern := value.MoviePattern
 	template := value.MovieTemplate
 	if candidate.Kind == media.Episode {
@@ -168,7 +181,7 @@ func (value Settings) FormatName(originalPath string, candidate media.Candidate)
 	case NamingSimple:
 		return media.Format(pattern, originalPath, candidate)
 	case NamingAdvanced:
-		return media.FormatAdvanced(template, originalPath, candidate)
+		return media.FormatAdvancedWithMetadata(template, originalPath, candidate, technical)
 	default:
 		return "", fmt.Errorf("unsupported naming mode %q", value.NamingMode)
 	}

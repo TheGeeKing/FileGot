@@ -153,6 +153,27 @@ func TestMainWindowPresentation(t *testing.T) {
 	}
 }
 
+func TestMediaDetailsRequireSelectedLocalFile(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	application := New(
+		app,
+		settings.NewStore(app.Preferences()),
+		rename.NewManager(filepath.Join(t.TempDir(), "last-rename.json")),
+	)
+	if application.mediaDetailsButton == nil || !application.mediaDetailsButton.Disabled() {
+		t.Fatal("media details should be disabled without a selected local file")
+	}
+
+	application.files = []media.File{{Path: "movie.mkv", Status: media.Review}}
+	application.selected = 0
+	application.selectedRows[0] = true
+	application.updateButtons()
+	if application.mediaDetailsButton.Disabled() {
+		t.Fatal("media details should be enabled for a selected local file")
+	}
+}
+
 func TestTableColumnsSort(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)

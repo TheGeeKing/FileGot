@@ -1,0 +1,52 @@
+{
+  "media": {
+    "@ref": "Dune.Part.Two.mkv",
+    "track": [
+      {
+        "@type": "General",
+        "Format": "Matroska",
+        "Duration": "9972.032",
+        "OverallBitRate": "18400000",
+        "Title": "Dune: Part Two"
+      },
+      {
+        "@type": "Video",
+        "Format": "HEVC",
+        "Format_Profile": "Main 10",
+        "HDR_Format": "Dolby Vision / SMPTE ST 2086",
+        "HDR_Format_Compatibility": "HDR10",
+        "Width": "3840",
+        "Height": "2160",
+        "BitDepth": "10",
+        "FrameRate": "23.976",
+        "BitRate": "16000000",
+        "DisplayAspectRatio": "1.778"
+      },
+      {
+        "@type": "Audio",
+        "Format": "MLP FBA",
+        "Format_Commercial_IfAny": "Dolby TrueHD with Dolby Atmos",
+        "Channels": "8",
+        "ChannelLayout": "L R C LFE Ls Rs Lb Rb",
+        "SamplingRate": "48000",
+        "BitRate": "2400000",
+        "Language": "en"
+      },
+      {
+        "@type": "Text",
+        "Format": "UTF-8",
+        "Language": "fr"
+      },
+      {
+        "@type": "Image",
+        "Format": "JPEG",
+        "Type": "Cover"
+      },
+      {
+        "@type": "Menu",
+        "00_00_000": "Chapter 1",
+        "00_10_000": "Chapter 2"
+      }
+    ]
+  }
+}

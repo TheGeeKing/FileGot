@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/mediainfo"
 	"github.com/TheGeeKing/FileGot/internal/settings"
 	"github.com/TheGeeKing/FileGot/internal/tmdb"
 )
@@ -370,7 +371,20 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 		}
 	}
 
-	proposed, err := options.FormatName(file.Path, candidate)
+	if options.NamingMode == settings.NamingAdvanced &&
+		media.AdvancedTemplateUsesTechnicalMetadata(templateFor(candidate.Kind, options)) {
+		if file.Path == "" {
+			setError(&file, fmt.Errorf("technical metadata requires a local media file"))
+			return file
+		}
+		technical, err := mediainfo.Probe(ctx, options.MediaInfoExecutable, file.Path)
+		if err != nil {
+			setError(&file, err)
+			return file
+		}
+		file.Technical = technical
+	}
+	proposed, err := options.FormatNameWithMetadata(file.Path, candidate, file.Technical)
 	if err != nil {
 		setError(&file, err)
 		return file
@@ -380,6 +394,13 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 	file.Status = media.Ready
 	file.Message = ""
 	return file
+}
+
+func templateFor(kind media.Kind, options settings.Settings) string {
+	if kind == media.Episode {
+		return options.EpisodeTemplate
+	}
+	return options.MovieTemplate
 }
 
 func applyCandidates(ctx context.Context, file *media.File, candidates []media.Candidate, options settings.Settings, matcher *Matcher) {

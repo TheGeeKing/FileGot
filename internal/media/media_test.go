@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/TheGeeKing/FileGot/internal/mediainfo"
 )
 
 func TestParse(t *testing.T) {
@@ -285,7 +287,6 @@ func TestValidateAdvancedTemplate(t *testing.T) {
 
 	invalid := []string{
 		`{{range .Title}}{{.}}{{end}}`,
-		`{resolution}`,
 		`{id}`,
 		`{n.unknown()}`,
 		`{n.lower('extra')}`,
@@ -344,11 +345,19 @@ func TestAdvancedTemplateCompletions(t *testing.T) {
 	}{
 		{
 			name: "movie bindings", kind: Movie, pattern: "{", cursor: 1,
-			want: []string{"n", "ny", "primaryTitle", "tmdbid", "y"}, replacement: [2]int{1, 1},
+			want: []string{
+				"n", "ny", "primaryTitle", "tmdbid", "y",
+				"vcf", "vc", "ac", "cf", "vf", "hpi", "vk", "aco", "acf", "af", "channels",
+				"resolution", "width", "height", "bitdepth", "hdr", "dovi", "bitrate", "vbr",
+				"abr", "fps", "khz", "ar", "ws", "hd", "s3d", "mediaTitle", "audioLanguages",
+				"textLanguages", "duration", "seconds", "minutes", "hours",
+				"media", "video", "audio", "text", "chapters", "image", "menu",
+			},
+			replacement: [2]int{1, 1},
 		},
 		{
 			name: "episode-only binding", kind: Episode, pattern: "{t", cursor: 2,
-			want: []string{"t", "tmdbid"}, replacement: [2]int{1, 2},
+			want: []string{"t", "tmdbid", "textLanguages", "text"}, replacement: [2]int{1, 2},
 		},
 		{
 			name: "binding prefix", kind: Movie, pattern: "prefix {pr} suffix", cursor: 10,
@@ -552,5 +561,42 @@ func TestDiscover(t *testing.T) {
 		if err == nil && len(files) > 1 {
 			t.Fatalf("Windows discovery should deduplicate case-insensitively")
 		}
+	}
+}
+
+func TestAdvancedNamingUsesTechnicalBindingsAndRawObjects(t *testing.T) {
+	input, err := os.Open(filepath.Join("..", "mediainfo", "testdata", "movie.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	technical, err := mediainfo.Decode(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := FormatAdvancedWithMetadata(
+		`{n} [{vf} {vc} {aco}] [{video[0].Format_Profile}]`,
+		"movie.mkv",
+		Candidate{Kind: Movie, Title: "Dune Part Two"},
+		technical,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Dune Part Two [2160p HEVC TrueHD+Atmos] [Main 10].mkv"; got != want {
+		t.Fatalf("FormatAdvancedWithMetadata() = %q, want %q", got, want)
+	}
+}
+
+func TestAdvancedTechnicalBindingRequiresMetadata(t *testing.T) {
+	_, err := FormatAdvancedWithMetadata(
+		`{n} [{hdr}]`,
+		"movie.mkv",
+		Candidate{Kind: Movie, Title: "Dune Part Two"},
+		mediainfo.Metadata{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "binding hdr is unavailable") {
+		t.Fatalf("missing metadata error = %v", err)
 	}
 }

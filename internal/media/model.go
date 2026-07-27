@@ -1,5 +1,7 @@
 package media
 
+import "github.com/TheGeeKing/FileGot/internal/mediainfo"
+
 type Kind string
 
 const (
@@ -51,6 +53,7 @@ type File struct {
 	Proposed   string
 	Status     Status
 	Message    string
+	Technical  mediainfo.Metadata
 }
 
 func (file File) IsExpectedEpisode() bool {

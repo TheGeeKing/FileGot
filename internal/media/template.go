@@ -12,6 +12,8 @@ import (
 	"strings"
 	"text/template"
 	"unicode"
+
+	"github.com/TheGeeKing/FileGot/internal/mediainfo"
 )
 
 type templateData struct {
@@ -25,6 +27,14 @@ type templateData struct {
 	EpisodeTitle string
 	TMDBID       string
 	PrimaryTitle string
+	Technical    map[string]string
+	Media        map[string]string
+	Video        []map[string]string
+	Audio        []map[string]string
+	Text         []map[string]string
+	Chapters     map[string]string
+	Image        map[string]string
+	Menu         map[string]string
 }
 
 type AdvancedTemplateParameterType uint8
@@ -78,6 +88,7 @@ type AdvancedTemplateSignature struct {
 type fileBotBinding struct {
 	AdvancedTemplateSyntax
 	field string
+	key   string
 }
 
 var fileBotBindings = map[Kind][]fileBotBinding{
@@ -190,6 +201,67 @@ var fileBotBindings = map[Kind][]fileBotBinding{
 			field: "Year",
 		},
 	},
+}
+
+var technicalBindingNames = []string{
+	"vcf", "vc", "ac", "cf", "vf", "hpi", "vk", "aco", "acf", "af", "channels",
+	"resolution", "width", "height", "bitdepth", "hdr", "dovi", "bitrate", "vbr",
+	"abr", "fps", "khz", "ar", "ws", "hd", "s3d", "mediaTitle", "audioLanguages",
+	"textLanguages", "duration", "seconds", "minutes", "hours",
+}
+
+func AdvancedTemplateUsesTechnicalMetadata(pattern string) bool {
+	for _, name := range technicalBindingNames {
+		if regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`).MatchString(pattern) {
+			return true
+		}
+	}
+	for _, name := range []string{"media", "video", "audio", "text", "chapters", "image", "menu"} {
+		if regexp.MustCompile(`\b` + name + `\b`).MatchString(pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func init() {
+	for kind := range fileBotBindings {
+		for _, name := range technicalBindingNames {
+			fileBotBindings[kind] = append(fileBotBindings[kind], fileBotBinding{
+				AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+					Name: name, Syntax: "{" + name + "}", Description: "Technical media metadata",
+					Example: technicalExample(name), ReturnType: "String",
+				},
+				field: "Technical", key: name,
+			})
+		}
+		for _, raw := range []struct {
+			name, field, returnType string
+		}{
+			{"media", "Media", "Map"}, {"video", "Video", "List"}, {"audio", "Audio", "List"},
+			{"text", "Text", "List"}, {"chapters", "Chapters", "Map"},
+			{"image", "Image", "Map"}, {"menu", "Menu", "Map"},
+		} {
+			fileBotBindings[kind] = append(fileBotBindings[kind], fileBotBinding{
+				AdvancedTemplateSyntax: AdvancedTemplateSyntax{
+					Name: raw.name, Syntax: "{" + raw.name + "}", Description: "Raw MediaInfo object",
+					Example: "<properties>", ReturnType: raw.returnType,
+				},
+				field: raw.field,
+			})
+		}
+	}
+}
+
+func technicalExample(name string) string {
+	if value := map[string]string{
+		"vcf": "HEVC", "vc": "x265", "ac": "truehd", "cf": "mkv", "vf": "2160p",
+		"resolution": "3840x2160", "hdr": "HDR10", "dovi": "Dolby Vision",
+		"aco": "TrueHD+Atmos", "channels": "7.1", "audioLanguages": "en",
+	}[name]; value != "" {
+		return value
+	}
+	return "<value>"
 }
 
 var advancedTemplateExpressions = []AdvancedTemplateSyntax{
@@ -416,7 +488,7 @@ var fileBotMethods = []fileBotMethod{
 var romanNumber = regexp.MustCompile(`\b(?:1[0-2]|[1-9])\b`)
 
 var fileBotFunctions = func() template.FuncMap {
-	functions := template.FuncMap{"required": required}
+	functions := template.FuncMap{"required": required, "property": property, "at": at}
 	for _, method := range fileBotMethods {
 		functions[method.Name] = method.function
 	}
@@ -837,16 +909,24 @@ func ValidateAdvancedPattern(kind Kind, pattern string) error {
 	if err != nil {
 		return err
 	}
-	_, err = executeAdvanced(parsed, "example.mkv", exampleCandidate(kind))
+	_, err = executeAdvanced(parsed, "example.mkv", exampleCandidate(kind), exampleTechnicalMetadata())
 	return err
 }
 
 func FormatAdvanced(pattern, originalPath string, candidate Candidate) (string, error) {
+	return FormatAdvancedWithMetadata(pattern, originalPath, candidate, mediainfo.Metadata{})
+}
+
+func FormatAdvancedWithMetadata(
+	pattern, originalPath string,
+	candidate Candidate,
+	technical mediainfo.Metadata,
+) (string, error) {
 	parsed, err := parseAdvanced(candidate.Kind, pattern)
 	if err != nil {
 		return "", err
 	}
-	return executeAdvanced(parsed, originalPath, candidate)
+	return executeAdvanced(parsed, originalPath, candidate, technical)
 }
 
 func parseAdvanced(kind Kind, pattern string) (*template.Template, error) {
@@ -867,7 +947,12 @@ func parseAdvanced(kind Kind, pattern string) (*template.Template, error) {
 	return parsed, nil
 }
 
-func executeAdvanced(parsed *template.Template, originalPath string, candidate Candidate) (string, error) {
+func executeAdvanced(
+	parsed *template.Template,
+	originalPath string,
+	candidate Candidate,
+	technical mediainfo.Metadata,
+) (string, error) {
 	switch candidate.Kind {
 	case Movie:
 		if strings.TrimSpace(candidate.Title) == "" {
@@ -885,7 +970,7 @@ func executeAdvanced(parsed *template.Template, originalPath string, candidate C
 	}
 
 	var output bytes.Buffer
-	if err := parsed.Execute(&output, namingData(candidate)); err != nil {
+	if err := parsed.Execute(&output, namingData(candidate, technical)); err != nil {
 		return "", fmt.Errorf("%s template: %w", candidate.Kind, err)
 	}
 	return finishName(output.String(), originalPath)
@@ -994,7 +1079,7 @@ func compileFileBotExpression(kind Kind, expression string) (string, error) {
 	if allowsMissing {
 		return "{{." + field + pipeline + "}}", nil
 	}
-	return "{{required " + strconv.Quote(binding) + " ." + field + pipeline + "}}", nil
+	return requiredTemplate(binding, field, pipeline), nil
 }
 
 func normalizeFileBotExpression(expression string) (string, error) {
@@ -1178,7 +1263,33 @@ func compileFileBotNode(kind Kind, node ast.Expr) (string, string, string, strin
 		if !ok {
 			return "", "", "", "", false, fmt.Errorf("binding %s is not available for %s names", current.Name, kind)
 		}
-		return binding.field, current.Name, "", binding.ReturnType, false, nil
+		pipeline := ""
+		if binding.key != "" {
+			pipeline = " | property " + strconv.Quote(binding.key)
+		}
+		return binding.field, current.Name, pipeline, binding.ReturnType, false, nil
+	case *ast.IndexExpr:
+		field, binding, pipeline, receiverType, allowsMissing, err := compileFileBotNode(kind, current.X)
+		if err != nil {
+			return "", "", "", "", false, err
+		}
+		if receiverType != "List" {
+			return "", "", "", "", false, fmt.Errorf("only list bindings can be indexed")
+		}
+		index, ok := current.Index.(*ast.BasicLit)
+		if !ok || index.Kind != token.INT || strings.Trim(index.Value, "0123456789") != "" {
+			return "", "", "", "", false, fmt.Errorf("list index must be a positive integer")
+		}
+		return field, binding, pipeline + " | at " + index.Value, "Map", allowsMissing, nil
+	case *ast.SelectorExpr:
+		field, binding, pipeline, receiverType, allowsMissing, err := compileFileBotNode(kind, current.X)
+		if err != nil {
+			return "", "", "", "", false, err
+		}
+		if receiverType != "Map" {
+			return "", "", "", "", false, fmt.Errorf("properties require a raw media object")
+		}
+		return field, binding, pipeline + " | property " + strconv.Quote(current.Sel.Name), "String", allowsMissing, nil
 	case *ast.CallExpr:
 		selector, ok := current.Fun.(*ast.SelectorExpr)
 		if !ok {
@@ -1292,7 +1403,7 @@ func compileFileBotResult(kind Kind, node ast.Expr) (string, error) {
 	if allowsMissing {
 		return "{{." + field + pipeline + "}}", nil
 	}
-	return "{{required " + strconv.Quote(binding) + " ." + field + pipeline + "}}", nil
+	return requiredTemplate(binding, field, pipeline), nil
 }
 
 func compileFileBotArgument(node ast.Expr) (fileBotArgument, error) {
@@ -1523,7 +1634,7 @@ func isIdentifierPart(character byte) bool {
 	return isIdentifierStart(character) || character >= '0' && character <= '9'
 }
 
-func namingData(candidate Candidate) templateData {
+func namingData(candidate Candidate, technical mediainfo.Metadata) templateData {
 	year := candidate.Year
 	if candidate.Kind == Episode {
 		year = candidate.SeriesYear
@@ -1531,6 +1642,9 @@ func namingData(candidate Candidate) templateData {
 	data := templateData{
 		Name: candidate.Title, Year: number(year),
 		TMDBID: number(candidate.ID), PrimaryTitle: candidate.OriginalTitle,
+		Technical: technical.Bindings, Media: technical.Media, Video: technical.Video,
+		Audio: technical.Audio, Text: technical.Text, Chapters: technical.Chapters,
+		Image: technical.Image, Menu: technical.Menu,
 	}
 	data.NameYear = data.Name
 	if data.Year != "" {
@@ -1544,6 +1658,36 @@ func namingData(candidate Candidate) templateData {
 		data.EpisodeTitle = candidate.EpisodeTitle
 	}
 	return data
+}
+
+func exampleTechnicalMetadata() mediainfo.Metadata {
+	return mediainfo.Metadata{
+		Bindings: map[string]string{
+			"vcf": "HEVC", "vc": "x265", "ac": "truehd", "cf": "mkv", "vf": "2160p",
+			"hpi": "2160p", "vk": "4K", "aco": "TrueHD+Atmos", "acf": "TrueHD7.1",
+			"af": "8ch", "channels": "7.1", "resolution": "3840x2160", "width": "3840",
+			"height": "2160", "bitdepth": "10", "hdr": "HDR10", "dovi": "Dolby Vision",
+			"bitrate": "18.4 Mbps", "vbr": "16.0 Mbps", "abr": "2.4 Mbps",
+			"fps": "23.976 fps", "khz": "48 kHz", "ar": "16∶9", "hd": "UHD",
+			"mediaTitle": "Dune: Part Two", "audioLanguages": "en", "textLanguages": "fr",
+			"duration": "2h46m12s", "seconds": "9972", "minutes": "166", "hours": "2:46",
+		},
+		Media: map[string]string{"Format": "Matroska"},
+		Video: []map[string]string{{"Format_Profile": "Main 10"}},
+		Audio: []map[string]string{{"Format": "MLP FBA"}},
+		Text:  []map[string]string{{"Language": "fr"}},
+	}
+}
+
+func property(name string, values map[string]string) string {
+	return values[name]
+}
+
+func at(index int, values []map[string]string) map[string]string {
+	if index < 0 || index >= len(values) {
+		return nil
+	}
+	return values[index]
 }
 
 func exampleCandidate(kind Kind) Candidate {
@@ -1579,6 +1723,14 @@ func required(binding, value string) (string, error) {
 		return "", fmt.Errorf("binding %s is unavailable", binding)
 	}
 	return value, nil
+}
+
+func requiredTemplate(binding, field, pipeline string) string {
+	if field == "Technical" || field == "Media" || field == "Video" || field == "Audio" ||
+		field == "Text" || field == "Chapters" || field == "Image" || field == "Menu" {
+		return "{{required " + strconv.Quote(binding) + " (." + field + pipeline + ")}}"
+	}
+	return "{{required " + strconv.Quote(binding) + " ." + field + pipeline + "}}"
 }
 
 func pad(length int, padding, value string) string {

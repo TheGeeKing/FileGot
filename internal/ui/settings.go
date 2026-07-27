@@ -10,6 +10,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/mediainfo"
 	"github.com/TheGeeKing/FileGot/internal/settings"
 	"github.com/TheGeeKing/FileGot/internal/tmdb"
 )
@@ -104,6 +105,10 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	includeAdult.SetChecked(current.IncludeAdult)
 	connectionStatus := widget.NewLabel("")
 	connectionStatus.Wrapping = fyne.TextWrapWord
+	mediaInfoExecutable := widget.NewEntry()
+	mediaInfoExecutable.SetText(current.MediaInfoExecutable)
+	mediaInfoStatus := widget.NewLabel("")
+	mediaInfoStatus.Wrapping = fyne.TextWrapWord
 
 	mode := current.NamingMode
 	simpleMovie, simpleEpisode := current.MoviePattern, current.EpisodePattern
@@ -169,7 +174,8 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		return settings.Settings{
 			TMDBToken: tokenEntry.Text, Language: languageSelect.Selected,
 			PreferOriginalTitle: preferOriginal.Checked, IncludeAdult: includeAdult.Checked,
-			NamingMode: mode, MoviePattern: simpleMovie, EpisodePattern: simpleEpisode,
+			MediaInfoExecutable: mediaInfoExecutable.Text,
+			NamingMode:          mode, MoviePattern: simpleMovie, EpisodePattern: simpleEpisode,
 			MovieTemplate: advancedMovie, EpisodeTemplate: advancedEpisode,
 			ScanSubfolders: scanSubfolders.Checked, AutoMatch: autoMatch.Checked,
 			IncludeSpecials: includeSpecials.Checked,
@@ -265,6 +271,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	languageSelect.OnChanged = func(string) { refreshValidation() }
 	preferOriginal.OnChanged = func(bool) { refreshValidation() }
 	includeAdult.OnChanged = func(bool) { refreshValidation() }
+	mediaInfoExecutable.OnChanged = func(string) { refreshValidation() }
 	scanSubfolders.OnChanged = func(bool) { refreshValidation() }
 	autoMatch.OnChanged = func(bool) { refreshValidation() }
 	includeSpecials.OnChanged = func(bool) { refreshValidation() }
@@ -298,6 +305,24 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		}()
 	}
 
+	testMediaInfoButton := widget.NewButton("Test MediaInfo", nil)
+	testMediaInfoButton.OnTapped = func() {
+		testMediaInfoButton.Disable()
+		mediaInfoStatus.SetText("Starting MediaInfo…")
+		executable := mediaInfoExecutable.Text
+		go func() {
+			err := mediainfo.TestExecutable(context.Background(), executable)
+			fyne.Do(func() {
+				testMediaInfoButton.Enable()
+				if err != nil {
+					mediaInfoStatus.SetText(err.Error())
+					return
+				}
+				mediaInfoStatus.SetText("MediaInfo is available.")
+			})
+		}()
+	}
+
 	providerTab := container.NewTabItem("TMDB", container.NewVBox(
 		widget.NewForm(
 			widget.NewFormItem("Read Access Token", tokenEntry),
@@ -307,6 +332,11 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		includeAdult,
 		container.NewHBox(testButton),
 		connectionStatus,
+	))
+	mediaInfoTab := container.NewTabItem("MediaInfo", container.NewVBox(
+		widget.NewForm(widget.NewFormItem("Executable", mediaInfoExecutable)),
+		container.NewHBox(testMediaInfoButton),
+		mediaInfoStatus,
 	))
 	namingControls := container.NewVBox(
 		widget.NewForm(
@@ -350,6 +380,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		languageSelect.SetSelected(defaults.Language)
 		preferOriginal.SetChecked(defaults.PreferOriginalTitle)
 		includeAdult.SetChecked(defaults.IncludeAdult)
+		mediaInfoExecutable.SetText(defaults.MediaInfoExecutable)
 		applyingMode = true
 		moviePattern.SetText(simpleMovie)
 		episodePattern.SetText(simpleEpisode)
@@ -367,7 +398,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		refreshValidation()
 	})
 
-	tabs := container.NewAppTabs(providerTab, namingTab, behaviorTab)
+	tabs := container.NewAppTabs(providerTab, mediaInfoTab, namingTab, behaviorTab)
 	footer := container.NewBorder(nil, nil, restoreButton, container.NewHBox(cancelButton, saveButton), validation)
 	window.SetContent(container.NewBorder(nil, footer, nil, nil, tabs))
 	window.Resize(fyne.NewSize(1040, 700))
