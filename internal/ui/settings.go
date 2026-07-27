@@ -195,15 +195,16 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 			saveButton.Enable()
 		}
 
-		movieExample, movieErr := candidate.FormatName("movie.mkv", media.Candidate{
+		technicalExample := media.ExampleTechnicalMetadata()
+		movieExample, movieErr := candidate.FormatNameWithMetadata("movie.mkv", media.Candidate{
 			ID: 438631, Kind: media.Movie, Title: "Dune: Part Two",
 			OriginalTitle: "Dune: Part Two", Year: 2024,
-		})
-		episodeExample, episodeErr := candidate.FormatName("episode.mkv", media.Candidate{
+		}, technicalExample)
+		episodeExample, episodeErr := candidate.FormatNameWithMetadata("episode.mkv", media.Candidate{
 			ID: 100088, Kind: media.Episode, Title: "The Last of Us",
 			OriginalTitle: "The Last of Us", SeriesYear: 2023,
 			Season: 1, Episode: 3, EpisodeTitle: "Long, Long Time",
-		})
+		}, technicalExample)
 		movieLine := "Movie: " + movieExample
 		if movieErr != nil {
 			movieLine = "Movie error: " + movieErr.Error()

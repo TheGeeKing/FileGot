@@ -2,6 +2,8 @@ package media
 
 import (
 	"bytes"
+	_ "embed"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -15,6 +17,9 @@ import (
 
 	"github.com/TheGeeKing/FileGot/internal/mediainfo"
 )
+
+//go:embed mediainfo_fields.txt
+var mediaInfoFields string
 
 type templateData struct {
 	Name         string
@@ -337,7 +342,7 @@ func init() {
 		for _, name := range technicalBindingNames {
 			fileBotBindings[kind] = append(fileBotBindings[kind], fileBotBinding{
 				AdvancedTemplateSyntax: AdvancedTemplateSyntax{
-					Name: name, Syntax: "{" + name + "}", Description: "Technical media metadata",
+					Name: name, Syntax: "{" + name + "}", Description: technicalDescription(name),
 					Example: technicalExample(name), ReturnType: "String",
 				},
 				field: "Technical", key: name, metadata: true,
@@ -347,8 +352,8 @@ func init() {
 			metadataFields[raw.field] = true
 			fileBotBindings[kind] = append(fileBotBindings[kind], fileBotBinding{
 				AdvancedTemplateSyntax: AdvancedTemplateSyntax{
-					Name: raw.name, Syntax: "{" + raw.name + "}", Description: "Raw MediaInfo object",
-					Example: "<properties>", ReturnType: raw.returnType,
+					Name: raw.name, Syntax: "{" + raw.name + "}", Description: rawDescription(raw.name),
+					Example: rawExample(raw.name), ReturnType: raw.returnType,
 				},
 				field: raw.field, metadata: true,
 			})
@@ -357,14 +362,56 @@ func init() {
 }
 
 func technicalExample(name string) string {
-	if value := map[string]string{
+	return map[string]string{
 		"vcf": "HEVC", "vc": "x265", "ac": "truehd", "cf": "mkv", "vf": "2160p",
-		"resolution": "3840x2160", "hdr": "HDR10", "dovi": "Dolby Vision",
-		"aco": "TrueHD+Atmos", "channels": "7.1", "audioLanguages": "en",
-	}[name]; value != "" {
-		return value
-	}
-	return "<value>"
+		"hpi": "2160p", "vk": "4K", "aco": "TrueHD+Atmos", "acf": "TrueHD7.1",
+		"af": "8ch", "channels": "7.1", "resolution": "3840x2160", "width": "3840",
+		"height": "2160", "bitdepth": "10", "hdr": "HDR10", "dovi": "Dolby Vision",
+		"bitrate": "18.4 Mbps", "vbr": "16.0 Mbps", "abr": "2.4 Mbps",
+		"fps": "23.976 fps", "khz": "48 kHz", "ar": "16∶9", "ws": "WS", "hd": "UHD",
+		"s3d": "Side by Side", "mediaTitle": "Dune: Part Two",
+		"audioLanguages": "en", "textLanguages": "fr", "duration": "2h46m12s",
+		"seconds": "9972", "minutes": "166", "hours": "2:46",
+	}[name]
+}
+
+func technicalDescription(name string) string {
+	return map[string]string{
+		"vcf": "Video codec format", "vc": "Video codec or encoder", "ac": "Audio codec",
+		"cf": "Container format", "vf": "Video definition and scan type",
+		"hpi": "Video height and scan type", "vk": "Video definition class",
+		"aco": "Audio codec profile", "acf": "Audio codec and channel layout",
+		"af": "Audio channel count", "channels": "Audio channel layout",
+		"resolution": "Video width and height", "width": "Video width in pixels",
+		"height": "Video height in pixels", "bitdepth": "Video bit depth",
+		"hdr": "HDR format", "dovi": "Dolby Vision marker", "bitrate": "Overall bitrate",
+		"vbr": "Video bitrate", "abr": "Audio bitrate", "fps": "Video frame rate",
+		"khz": "Audio sampling rate", "ar": "Display aspect ratio",
+		"ws": "Widescreen marker", "hd": "SD, HD, or UHD class", "s3d": "Stereoscopic 3D layout",
+		"mediaTitle": "Embedded media title", "audioLanguages": "Audio track languages",
+		"textLanguages": "Subtitle track languages", "duration": "Media duration",
+		"seconds": "Duration in seconds", "minutes": "Duration in whole minutes",
+		"hours": "Duration as hours and minutes",
+	}[name]
+}
+
+func rawDescription(name string) string {
+	return map[string]string{
+		"media": "General MediaInfo fields", "video": "All video tracks and their MediaInfo fields",
+		"audio":    "All audio tracks and their MediaInfo fields",
+		"text":     "All subtitle tracks and their MediaInfo fields",
+		"chapters": "Chapter timestamps and titles", "image": "Cover-art MediaInfo fields",
+		"menu": "Menu and chapter MediaInfo fields",
+	}[name]
+}
+
+func rawExample(name string) string {
+	return map[string]string{
+		"media": `Format: Matroska`, "video": `video[0].Format_Profile → Main 10`,
+		"audio": `audio[0].Language → en`, "text": `text[0].Language → fr`,
+		"chapters": `00_00_00_000 → Chapter 1`, "image": `Format: JPEG`,
+		"menu": `00_00_00_000 → Chapter 1`,
+	}[name]
 }
 
 var advancedTemplateExpressions = []AdvancedTemplateSyntax{
@@ -661,9 +708,18 @@ func AdvancedTemplateCompletions(kind Kind, pattern string, cursor int) []Advanc
 	if err != nil {
 		return nil
 	}
-	_, _, _, receiverType, _, err := compileFileBotNode(kind, node)
+	field, binding, _, receiverType, _, err := compileFileBotNode(kind, node)
 	if err != nil {
 		return nil
+	}
+	if receiverType == "Map" {
+		return advancedPropertyCompletions(
+			rawMediaInfoKind(field, binding),
+			string(expression[dot+1:]),
+			start+1+dot+1,
+			advancedIdentifierEnd(runes, cursor),
+			base,
+		)
 	}
 	return advancedCompletions(
 		fileBotMethodSyntax(receiverType),
@@ -672,6 +728,101 @@ func AdvancedTemplateCompletions(kind Kind, pattern string, cursor int) []Advanc
 		advancedIdentifierEnd(runes, cursor),
 		base,
 	)
+}
+
+func rawMediaInfoKind(field, binding string) string {
+	switch field {
+	case "Media":
+		return "General"
+	case "Image":
+		return "Image"
+	case "Menu", "Chapters":
+		return "Menu"
+	case "Video":
+		return "Video"
+	case "Audio":
+		return "Audio"
+	case "Text":
+		return "Text"
+	}
+	_ = binding
+	return ""
+}
+
+func advancedPropertyCompletions(kind, prefix string, start, end int, receiver string) []AdvancedTemplateCompletion {
+	if kind == "" {
+		return nil
+	}
+	var completions []AdvancedTemplateCompletion
+	for _, field := range mediaInfoFieldCatalog()[kind] {
+		if !strings.HasPrefix(field.Name, prefix) {
+			continue
+		}
+		field.Syntax = "{" + receiver + "." + field.Name + "}"
+		completions = append(completions, AdvancedTemplateCompletion{
+			AdvancedTemplateSyntax: field,
+			InsertText:             field.Name,
+			ReplaceStart:           start,
+			ReplaceEnd:             end,
+		})
+	}
+	return completions
+}
+
+func mediaInfoFieldCatalog() map[string][]AdvancedTemplateSyntax {
+	result := make(map[string][]AdvancedTemplateSyntax)
+	section := ""
+	for _, line := range strings.Split(mediaInfoFields, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "\uFEFF"))
+		if line == "" {
+			continue
+		}
+		switch line {
+		case "General", "Video", "Audio", "Text", "Other", "Image", "Menu":
+			section = line
+			continue
+		}
+		if section == "" || section == "Other" {
+			continue
+		}
+		name, description, _ := strings.Cut(line, ":")
+		name = strings.TrimSpace(name)
+		if !advancedIdentifier([]rune(name)) || !unicode.IsLetter([]rune(name)[0]) {
+			continue
+		}
+		description = strings.TrimSpace(description)
+		if description == "" {
+			description = section + " MediaInfo field"
+		}
+		result[section] = append(result[section], AdvancedTemplateSyntax{
+			Name: name, Description: description, Example: mediaInfoFieldExample(section, name),
+			ReturnType: "String",
+		})
+	}
+	return result
+}
+
+func mediaInfoFieldExample(kind, name string) string {
+	metadata := ExampleTechnicalMetadata()
+	var values map[string]string
+	switch kind {
+	case "General":
+		values = metadata.Media
+	case "Video":
+		values = at(0, metadata.Video)
+	case "Audio":
+		values = at(0, metadata.Audio)
+	case "Text":
+		values = at(0, metadata.Text)
+	case "Image":
+		values = metadata.Image
+	case "Menu":
+		values = metadata.Menu
+	}
+	if value := values[name]; value != "" {
+		return value
+	}
+	return name + " value"
 }
 
 func advancedInterpolationCompletions(kind Kind, pattern []rune, start, cursor int) []AdvancedTemplateCompletion {
@@ -1012,7 +1163,7 @@ func ValidateAdvancedPattern(kind Kind, pattern string) error {
 	if err != nil {
 		return err
 	}
-	_, err = executeAdvanced(parsed, "example.mkv", exampleCandidate(kind), exampleTechnicalMetadata())
+	_, err = executeAdvanced(parsed, "example.mkv", exampleCandidate(kind), ExampleTechnicalMetadata())
 	return err
 }
 
@@ -1774,7 +1925,7 @@ func namingData(candidate Candidate, technical mediainfo.Metadata) templateData 
 	return data
 }
 
-func exampleTechnicalMetadata() mediainfo.Metadata {
+func ExampleTechnicalMetadata() mediainfo.Metadata {
 	return mediainfo.Metadata{
 		Bindings: map[string]string{
 			"vcf": "HEVC", "vc": "x265", "ac": "truehd", "cf": "mkv", "vf": "2160p",
@@ -1783,13 +1934,33 @@ func exampleTechnicalMetadata() mediainfo.Metadata {
 			"height": "2160", "bitdepth": "10", "hdr": "HDR10", "dovi": "Dolby Vision",
 			"bitrate": "18.4 Mbps", "vbr": "16.0 Mbps", "abr": "2.4 Mbps",
 			"fps": "23.976 fps", "khz": "48 kHz", "ar": "16∶9", "hd": "UHD",
+			"ws": "WS", "s3d": "Side by Side",
 			"mediaTitle": "Dune: Part Two", "audioLanguages": "en", "textLanguages": "fr",
 			"duration": "2h46m12s", "seconds": "9972", "minutes": "166", "hours": "2:46",
 		},
-		Media: map[string]string{"Format": "Matroska"},
-		Video: []map[string]string{{"Format_Profile": "Main 10"}},
-		Audio: []map[string]string{{"Format": "MLP FBA"}},
-		Text:  []map[string]string{{"Language": "fr"}},
+		Media: map[string]string{
+			"CompleteName": "Dune.Part.Two.2024.mkv", "FileName": "Dune.Part.Two.2024",
+			"FileExtension": "mkv", "Format": "Matroska", "FileSize": "22942525440",
+			"Duration": "9972032", "OverallBitRate": "18400000", "Title": "Dune: Part Two",
+			"VideoCount": "1", "AudioCount": "1", "TextCount": "1",
+		},
+		Video: []map[string]string{{
+			"Format": "HEVC", "Format_Profile": "Main 10", "CodecID": "V_MPEGH/ISO/HEVC",
+			"Width": "3840", "Height": "2160", "DisplayAspectRatio": "1.778",
+			"FrameRate": "23.976", "BitDepth": "10", "BitRate": "16000000",
+			"HDR_Format": "SMPTE ST 2086", "HDR_Format_Compatibility": "HDR10",
+		}},
+		Audio: []map[string]string{{
+			"Format": "MLP FBA", "Format_Commercial_IfAny": "Dolby TrueHD with Dolby Atmos",
+			"Channels": "8", "ChannelLayout": "L R C LFE Ls Rs Lb Rb",
+			"SamplingRate": "48000", "BitRate": "2400000", "Language": "en",
+		}},
+		Text: []map[string]string{{
+			"Format": "UTF-8", "CodecID": "S_TEXT/UTF8", "Language": "fr",
+		}},
+		Chapters: map[string]string{"00_00_00_000": "Chapter 1"},
+		Image:    map[string]string{"Format": "JPEG", "Type": "Cover", "Width": "1000", "Height": "1500"},
+		Menu:     map[string]string{"00_00_00_000": "Chapter 1", "Duration": "9972032"},
 	}
 }
 
@@ -1832,11 +2003,29 @@ func firstNonEmpty(value, fallback string) string {
 	return value
 }
 
-func required(binding, value string) (string, error) {
-	if value == "" {
+func required(binding string, value any) (string, error) {
+	switch current := value.(type) {
+	case nil:
 		return "", fmt.Errorf("binding %s is unavailable", binding)
+	case string:
+		if current == "" {
+			return "", fmt.Errorf("binding %s is unavailable", binding)
+		}
+		return current, nil
+	case map[string]string:
+		if len(current) == 0 {
+			return "", fmt.Errorf("binding %s is unavailable", binding)
+		}
+	case []map[string]string:
+		if len(current) == 0 {
+			return "", fmt.Errorf("binding %s is unavailable", binding)
+		}
 	}
-	return value, nil
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("render binding %s: %w", binding, err)
+	}
+	return string(data), nil
 }
 
 func requiredTemplate(binding, field, pipeline string) string {

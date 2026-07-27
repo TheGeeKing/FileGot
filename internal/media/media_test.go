@@ -436,6 +436,35 @@ func TestAdvancedTemplateCompletions(t *testing.T) {
 	}
 }
 
+func TestAdvancedTemplateCompletesMediaInfoObjectFields(t *testing.T) {
+	tests := []struct {
+		pattern string
+		want    string
+	}{
+		{pattern: `{media.CompleteN`, want: "CompleteName"},
+		{pattern: `{video[0].Wid`, want: "Width"},
+		{pattern: `{audio[0].ChannelL`, want: "ChannelLayout"},
+		{pattern: `{text[0].Lang`, want: "Language"},
+		{pattern: `{image.For`, want: "Format"},
+		{pattern: `{menu.Dur`, want: "Duration"},
+	}
+	for _, test := range tests {
+		t.Run(test.pattern, func(t *testing.T) {
+			completions := AdvancedTemplateCompletions(Movie, test.pattern, len([]rune(test.pattern)))
+			for _, completion := range completions {
+				if completion.Name == test.want {
+					if completion.InsertText != test.want || completion.Description == "" ||
+						completion.Example == "" || completion.ReturnType != "String" {
+						t.Fatalf("completion = %#v", completion)
+					}
+					return
+				}
+			}
+			t.Fatalf("completions = %#v, want %q", completions, test.want)
+		})
+	}
+}
+
 func TestAdvancedTemplateSignatureHelp(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -598,6 +627,50 @@ func TestAdvancedTechnicalBindingRequiresMetadata(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "binding hdr is unavailable") {
 		t.Fatalf("missing metadata error = %v", err)
+	}
+}
+
+func TestExampleTechnicalMetadataProvidesDocumentedBindings(t *testing.T) {
+	technical := ExampleTechnicalMetadata()
+	for _, name := range technicalBindingNames {
+		if technical.Bindings[name] == "" {
+			t.Errorf("example metadata has no value for %q", name)
+		}
+		if technicalDescription(name) == "" {
+			t.Errorf("technical binding %q has no description", name)
+		}
+		if technicalExample(name) == "" {
+			t.Errorf("technical binding %q has no example", name)
+		}
+	}
+
+	got, err := FormatAdvancedWithMetadata(
+		`{n} [{width}x{height}]`,
+		"movie.mkv",
+		Candidate{Kind: Movie, Title: "Dune Part Two"},
+		technical,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Dune Part Two [3840x2160].mkv"; got != want {
+		t.Fatalf("FormatAdvancedWithMetadata() = %q, want %q", got, want)
+	}
+
+	for _, expression := range []string{
+		`{media}`, `{video[0]}`, `{audio[0]}`, `{text[0]}`, `{chapters}`, `{image}`, `{menu}`,
+	} {
+		if _, err := FormatAdvancedWithMetadata(
+			expression,
+			"movie.mkv",
+			Candidate{Kind: Movie, Title: "Dune Part Two"},
+			technical,
+		); err != nil {
+			t.Errorf("%s: %v", expression, err)
+		}
+	}
+	if technical.Media["CompleteName"] == "" || technical.Audio[0]["ChannelLayout"] == "" {
+		t.Fatal("example raw MediaInfo objects are not populated")
 	}
 }
 
