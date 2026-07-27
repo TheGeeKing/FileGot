@@ -57,7 +57,7 @@ func Defaults() Settings {
 	movie, episode := Preset(PresetClean)
 	return Settings{
 		Language:            "en-US",
-		MediaInfoExecutable: "mediainfo",
+		MediaInfoExecutable: "",
 		NamingMode:          NamingSimple,
 		MoviePattern:        movie,
 		EpisodePattern:      episode,
@@ -100,7 +100,7 @@ func (store *Store) Load() Settings {
 		Language:            prefs.StringWithFallback("tmdb.language", defaults.Language),
 		PreferOriginalTitle: prefs.BoolWithFallback("tmdb.prefer_original_title", defaults.PreferOriginalTitle),
 		IncludeAdult:        prefs.BoolWithFallback("tmdb.include_adult", defaults.IncludeAdult),
-		MediaInfoExecutable: prefs.StringWithFallback("mediainfo.executable", defaults.MediaInfoExecutable),
+		MediaInfoExecutable: configuredMediaInfo(prefs.StringWithFallback("mediainfo.executable", defaults.MediaInfoExecutable)),
 		NamingMode:          prefs.StringWithFallback("naming.mode", defaults.NamingMode),
 		MoviePattern:        prefs.StringWithFallback("naming.movie", defaults.MoviePattern),
 		EpisodePattern:      prefs.StringWithFallback("naming.episode", defaults.EpisodePattern),
@@ -113,6 +113,13 @@ func (store *Store) Load() Settings {
 		IgnoreHidden:        prefs.BoolWithFallback("behavior.ignore_hidden", defaults.IgnoreHidden),
 		SortMatchedByStatus: prefs.BoolWithFallback("behavior.sort_matched_by_status", defaults.SortMatchedByStatus),
 	}
+}
+
+func configuredMediaInfo(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "mediainfo") {
+		return ""
+	}
+	return value
 }
 
 func (store *Store) Validate(value Settings) error {

@@ -106,6 +106,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	connectionStatus := widget.NewLabel("")
 	connectionStatus.Wrapping = fyne.TextWrapWord
 	mediaInfoExecutable := widget.NewEntry()
+	mediaInfoExecutable.SetPlaceHolder("Automatic: PATH, then bundled tools/MediaInfo.exe")
 	mediaInfoExecutable.SetText(current.MediaInfoExecutable)
 	mediaInfoStatus := widget.NewLabel("")
 	mediaInfoStatus.Wrapping = fyne.TextWrapWord

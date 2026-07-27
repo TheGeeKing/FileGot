@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -32,8 +34,9 @@ var probeCache = struct {
 }{values: make(map[cacheKey]Metadata)}
 
 func Probe(ctx context.Context, executable, path string) (Metadata, error) {
-	if executable == "" {
-		executable = "mediainfo"
+	executable, err := ResolveExecutable(executable)
+	if err != nil {
+		return Metadata{}, err
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -91,8 +94,9 @@ func Probe(ctx context.Context, executable, path string) (Metadata, error) {
 }
 
 func TestExecutable(ctx context.Context, executable string) error {
-	if executable == "" {
-		executable = "mediainfo"
+	executable, err := ResolveExecutable(executable)
+	if err != nil {
+		return err
 	}
 	timeout, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
@@ -109,6 +113,49 @@ func TestExecutable(ctx context.Context, executable string) error {
 		return fmt.Errorf("MediaInfo output exceeds %d bytes", MaxOutputBytes)
 	}
 	return nil
+}
+
+func ResolveExecutable(configured string) (string, error) {
+	current, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate FileGot executable: %w", err)
+	}
+	return resolveExecutable(configured, filepath.Dir(current), exec.LookPath, regularFile)
+}
+
+func resolveExecutable(
+	configured, applicationDir string,
+	lookPath func(string) (string, error),
+	exists func(string) bool,
+) (string, error) {
+	configured = strings.TrimSpace(configured)
+	if configured != "" {
+		path, err := lookPath(configured)
+		if err != nil {
+			return "", fmt.Errorf("configured MediaInfo executable %q: %w", configured, err)
+		}
+		return path, nil
+	}
+	if path, err := lookPath("mediainfo"); err == nil {
+		return path, nil
+	}
+	bundled := filepath.Join(applicationDir, "tools", executableName())
+	if exists(bundled) {
+		return bundled, nil
+	}
+	return "", fmt.Errorf("MediaInfo CLI not found in settings, PATH, or %s", bundled)
+}
+
+func executableName() string {
+	if runtime.GOOS == "windows" {
+		return "MediaInfo.exe"
+	}
+	return "mediainfo"
+}
+
+func regularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 type limitedBuffer struct {
