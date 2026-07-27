@@ -19,7 +19,7 @@ not use a parent or sub-issue hierarchy.
 | [#5](https://github.com/TheGeeKing/FileGot/issues/5) | Watch folders | Organize stable files through a polling CLI worker | #4 | Blocked |
 | [#6](https://github.com/TheGeeKing/FileGot/issues/6) | Disk integrity | Create and verify portable manifests for corruption detection | #4 for CLI only | Standby |
 | [#7](https://github.com/TheGeeKing/FileGot/issues/7) | TMDB artwork | Preview posters and optionally save non-destructive library artwork | #2 | Blocked |
-| [#8](https://github.com/TheGeeKing/FileGot/issues/8) | Technical metadata | Expose optional `ffprobe` details and quality naming tokens | — | Ready |
+| [#8](https://github.com/TheGeeKing/FileGot/issues/8) | Technical metadata | Expose optional MediaInfo details and FileBot-compatible technical bindings | — | Ready |
 | [#9](https://github.com/TheGeeKing/FileGot/issues/9) | TVmaze provider | Add a credential-free TV provider and the first provider seam | — | Ready |
 | [#10](https://github.com/TheGeeKing/FileGot/issues/10) | TheTVDB provider | Add user-configured movie and TV metadata | #9 | Blocked |
 | [#11](https://github.com/TheGeeKing/FileGot/issues/11) | AniDB provider | Add anime matching and absolute episode numbering | #9; reuses #1 | Blocked |
@@ -50,8 +50,9 @@ the selected next issue into the ready queue.
   an otherwise successful media operation.
 - Checksums primarily detect silent disk corruption. They remain explicit and
   do not automatically gate Rename or Organize.
-- Technical inspection uses an optional `ffprobe` process. FileGot does not
-  bundle binaries, transcode, or edit streams.
+- Technical inspection uses an optional MediaInfo process. FileGot does not
+  bundle binaries, transcode, or edit streams. ffprobe belongs only in a future
+  diagnostics feature that needs packet or frame analysis.
 - The TV provider interface is introduced by #9, when it has two real
   implementations. The movie interface is introduced by #10.
 - Providers remain explicit selections. FileGot does not silently merge or

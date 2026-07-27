@@ -11,3 +11,11 @@ _Avoid_: Placeholder file, imported file
 **Episode pairing**:
 The association of a local video file with one expected episode, made automatically from a unique season-and-episode identifier or selected manually.
 _Avoid_: Metadata match
+
+**Technical binding**:
+A naming value derived from the structure or encoded streams of a local media file rather than from an external title provider.
+_Avoid_: Probe token
+
+**Raw media object**:
+A FileBot-compatible map of MediaInfo fields for a general, video, audio, text, image, or menu stream.
+_Avoid_: Probe output
