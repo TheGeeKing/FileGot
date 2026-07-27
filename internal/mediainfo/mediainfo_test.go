@@ -29,7 +29,7 @@ func TestDecodeExposesRawObjectsAndNamingBindings(t *testing.T) {
 
 	want := map[string]string{
 		"cf": "mkv", "vcf": "HEVC", "resolution": "3840x2160",
-		"vf": "2160p", "vk": "4K", "bitdepth": "10", "hdr": "HDR10",
+		"vf": "2160p", "vk": "4K", "bitdepth": "10", "hdr": "DV+HDR10",
 		"dovi": "Dolby Vision", "ac": "truehd", "aco": "TrueHD+Atmos",
 		"af": "8ch", "channels": "7.1", "audioLanguages": "en",
 		"textLanguages": "fr", "mediaTitle": "Dune: Part Two",

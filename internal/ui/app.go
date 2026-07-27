@@ -179,12 +179,22 @@ func (application *Application) build() {
 	application.undoButton = widget.NewButtonWithIcon("Undo Last", theme.ContentUndoIcon(), application.undo)
 	showSettings := func() {
 		ShowSettings(application.app, application.settings, func() {
-			if err := application.refreshProposedNames(); err != nil {
-				dialog.ShowError(err, application.window)
-				return
-			}
-			application.setStatus("Settings saved.")
-			application.refresh()
+			application.busy = true
+			application.setStatus("Refreshing names…")
+			application.updateButtons()
+			go func() {
+				err := application.refreshProposedNames()
+				fyne.Do(func() {
+					application.busy = false
+					if err != nil {
+						dialog.ShowError(err, application.window)
+						application.updateButtons()
+						return
+					}
+					application.setStatus("Settings saved.")
+					application.refresh()
+				})
+			}()
 		})
 	}
 	application.window.SetMainMenu(fyne.NewMainMenu(
@@ -754,6 +764,15 @@ func unpairedExpected(file media.File, options settings.Settings) (media.File, e
 }
 
 func pairEpisode(local, expected media.File, options settings.Settings) (media.File, error) {
+	if options.NamingMode == settings.NamingAdvanced &&
+		media.AdvancedTemplateUsesTechnicalMetadata(namingTemplate(options, media.Episode)) &&
+		local.Technical.Bindings == nil {
+		technical, err := mediainfo.Probe(context.Background(), options.MediaInfoExecutable, local.Path)
+		if err != nil {
+			return media.File{}, err
+		}
+		local.Technical = technical
+	}
 	proposed, err := options.FormatNameWithMetadata(local.Path, expected.Candidate, local.Technical)
 	if err != nil {
 		return media.File{}, err
@@ -1093,20 +1112,30 @@ func (application *Application) reviewExpectedPairing(index int) {
 	}
 	message := widget.NewLabel("Choose an expected episode to pair with this file.")
 	var pairingDialog dialog.Dialog
-	pairButton := widget.NewButton("Pair", func() {
+	var pairButton *widget.Button
+	pairButton = widget.NewButton("Pair", func() {
 		selected := expectedSelect.SelectedIndex()
 		if selected < 0 || selected >= len(expectedIndices) {
 			message.SetText("Choose an expected episode first.")
 			return
 		}
-		if err := application.pairExpected(index, expectedIndices[selected]); err != nil {
-			message.SetText(err.Error())
-			return
-		}
-		pairingDialog.Hide()
-		application.clearSelection()
-		application.setStatus("Expected episode paired.")
-		application.refresh()
+		pairButton.Disable()
+		message.SetText("Reading media metadata…")
+		expectedIndex := expectedIndices[selected]
+		go func() {
+			err := application.pairExpected(index, expectedIndex)
+			fyne.Do(func() {
+				if err != nil {
+					message.SetText(err.Error())
+					pairButton.Enable()
+					return
+				}
+				pairingDialog.Hide()
+				application.clearSelection()
+				application.setStatus("Expected episode paired.")
+				application.refresh()
+			})
+		}()
 	})
 	setEnabled(pairButton, len(expectedLabels) > 0)
 	removeButton := widget.NewButton("Remove Pairing", func() {
@@ -1209,14 +1238,37 @@ func (application *Application) refreshProposedNames() error {
 		if !file.Imported {
 			continue
 		}
+		template := namingTemplate(options, file.Candidate.Kind)
+		if file.Path != "" && options.NamingMode == settings.NamingAdvanced &&
+			media.AdvancedTemplateUsesTechnicalMetadata(template) {
+			technical, err := mediainfo.Probe(context.Background(), options.MediaInfoExecutable, file.Path)
+			if err != nil {
+				files[index].Status = media.Error
+				files[index].Message = err.Error()
+				files[index].Proposed = ""
+				continue
+			}
+			files[index].Technical = technical
+		}
 		proposed, err := options.FormatNameWithMetadata(file.Path, file.Candidate, file.Technical)
 		if err != nil {
-			return err
+			files[index].Status = media.Error
+			files[index].Message = err.Error()
+			files[index].Proposed = ""
+			continue
 		}
 		files[index].Proposed = proposed
+		files[index].Message = ""
 	}
 	application.files = files
 	return nil
+}
+
+func namingTemplate(options settings.Settings, kind media.Kind) string {
+	if kind == media.Episode {
+		return options.EpisodeTemplate
+	}
+	return options.MovieTemplate
 }
 
 func (application *Application) undo() {

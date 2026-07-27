@@ -87,8 +87,9 @@ type AdvancedTemplateSignature struct {
 
 type fileBotBinding struct {
 	AdvancedTemplateSyntax
-	field string
-	key   string
+	field    string
+	key      string
+	metadata bool
 }
 
 var fileBotBindings = map[Kind][]fileBotBinding{
@@ -211,18 +212,23 @@ var technicalBindingNames = []string{
 }
 
 func AdvancedTemplateUsesTechnicalMetadata(pattern string) bool {
-	for _, name := range technicalBindingNames {
-		if regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`).MatchString(pattern) {
-			return true
-		}
-	}
-	for _, name := range []string{"media", "video", "audio", "text", "chapters", "image", "menu"} {
-		if regexp.MustCompile(`\b` + name + `\b`).MatchString(pattern) {
+	for _, binding := range fileBotBindings[Movie] {
+		if binding.metadata && regexp.MustCompile(`\b`+regexp.QuoteMeta(binding.Name)+`\b`).MatchString(pattern) {
 			return true
 		}
 	}
 	return false
 }
+
+var rawBindingDefinitions = []struct {
+	name, field, returnType string
+}{
+	{"media", "Media", "Map"}, {"video", "Video", "List"}, {"audio", "Audio", "List"},
+	{"text", "Text", "List"}, {"chapters", "Chapters", "Map"},
+	{"image", "Image", "Map"}, {"menu", "Menu", "Map"},
+}
+
+var metadataFields = map[string]bool{"Technical": true}
 
 func init() {
 	for kind := range fileBotBindings {
@@ -232,22 +238,17 @@ func init() {
 					Name: name, Syntax: "{" + name + "}", Description: "Technical media metadata",
 					Example: technicalExample(name), ReturnType: "String",
 				},
-				field: "Technical", key: name,
+				field: "Technical", key: name, metadata: true,
 			})
 		}
-		for _, raw := range []struct {
-			name, field, returnType string
-		}{
-			{"media", "Media", "Map"}, {"video", "Video", "List"}, {"audio", "Audio", "List"},
-			{"text", "Text", "List"}, {"chapters", "Chapters", "Map"},
-			{"image", "Image", "Map"}, {"menu", "Menu", "Map"},
-		} {
+		for _, raw := range rawBindingDefinitions {
+			metadataFields[raw.field] = true
 			fileBotBindings[kind] = append(fileBotBindings[kind], fileBotBinding{
 				AdvancedTemplateSyntax: AdvancedTemplateSyntax{
 					Name: raw.name, Syntax: "{" + raw.name + "}", Description: "Raw MediaInfo object",
 					Example: "<properties>", ReturnType: raw.returnType,
 				},
-				field: raw.field,
+				field: raw.field, metadata: true,
 			})
 		}
 	}
@@ -1273,6 +1274,17 @@ func compileFileBotNode(kind Kind, node ast.Expr) (string, string, string, strin
 		if err != nil {
 			return "", "", "", "", false, err
 		}
+		if receiverType == "Map" {
+			key, ok := current.Index.(*ast.BasicLit)
+			if !ok || key.Kind != token.STRING {
+				return "", "", "", "", false, fmt.Errorf("map index must be a string")
+			}
+			value, err := strconv.Unquote(key.Value)
+			if err != nil {
+				return "", "", "", "", false, fmt.Errorf("invalid map key")
+			}
+			return field, binding, pipeline + " | property " + strconv.Quote(value), "String", allowsMissing, nil
+		}
 		if receiverType != "List" {
 			return "", "", "", "", false, fmt.Errorf("only list bindings can be indexed")
 		}
@@ -1726,8 +1738,7 @@ func required(binding, value string) (string, error) {
 }
 
 func requiredTemplate(binding, field, pipeline string) string {
-	if field == "Technical" || field == "Media" || field == "Video" || field == "Audio" ||
-		field == "Text" || field == "Chapters" || field == "Image" || field == "Menu" {
+	if metadataFields[field] {
 		return "{{required " + strconv.Quote(binding) + " (." + field + pipeline + ")}}"
 	}
 	return "{{required " + strconv.Quote(binding) + " ." + field + pipeline + "}}"

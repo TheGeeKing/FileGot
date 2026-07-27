@@ -5,7 +5,7 @@
       {
         "@type": "General",
         "Format": "Matroska",
-        "Duration": "9972.032",
+        "Duration": "9972032",
         "OverallBitRate": "18400000",
         "Title": "Dune: Part Two"
       },
@@ -44,8 +44,10 @@
       },
       {
         "@type": "Menu",
-        "00_00_000": "Chapter 1",
-        "00_10_000": "Chapter 2"
+        "extra": {
+          "00_00_000": "Chapter 1",
+          "00_10_000": "Chapter 2"
+        }
       }
     ]
   }

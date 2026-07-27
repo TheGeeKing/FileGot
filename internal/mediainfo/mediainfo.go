@@ -84,6 +84,14 @@ func DecodeBytes(data []byte) (Metadata, error) {
 func stringMap(values map[string]any) map[string]string {
 	result := make(map[string]string, len(values))
 	for key, value := range values {
+		if key == "extra" {
+			if extra, ok := value.(map[string]any); ok {
+				for extraKey, extraValue := range stringMap(extra) {
+					result[extraKey] = extraValue
+				}
+			}
+			continue
+		}
 		switch current := value.(type) {
 		case string:
 			result[key] = current
@@ -151,7 +159,7 @@ func bindings(metadata Metadata) map[string]string {
 	set("channels", channelLayout(audio["Channels"]))
 	set("acf", audioChannelFormat(audio))
 	set("hd", definition(result["height"]))
-	if strings.EqualFold(video["ScanType"], "Interlaced") {
+	if ratio, err := strconv.ParseFloat(video["DisplayAspectRatio"], 64); err == nil && ratio > 1.37 {
 		result["ws"] = "WS"
 	}
 	set("s3d", video["MultiView_Layout"])
@@ -159,8 +167,8 @@ func bindings(metadata Metadata) map[string]string {
 	set("audioLanguages", languages(metadata.Audio))
 	set("textLanguages", languages(metadata.Text))
 
-	if secondsValue, err := strconv.ParseFloat(metadata.Media["Duration"], 64); err == nil {
-		duration := time.Duration(secondsValue * float64(time.Second))
+	if milliseconds, err := strconv.ParseFloat(metadata.Media["Duration"], 64); err == nil {
+		duration := time.Duration(milliseconds * float64(time.Millisecond))
 		seconds := int64(math.Round(duration.Seconds()))
 		result["duration"] = duration.String()
 		result["seconds"] = strconv.FormatInt(seconds, 10)
@@ -249,14 +257,16 @@ func hdr(video map[string]string) string {
 	value := strings.ToLower(video["HDR_Format"])
 	compatibility := strings.ToLower(video["HDR_Format_Compatibility"])
 	switch {
-	case strings.Contains(compatibility, "hdr10") || strings.Contains(value, "smpte st 2086"):
-		return "HDR10"
+	case strings.Contains(value, "dolby vision") && strings.Contains(compatibility, "hdr10"):
+		return "DV+HDR10"
+	case strings.Contains(value, "dolby vision"):
+		return "DV"
 	case strings.Contains(value, "hdr10+"):
 		return "HDR10+"
 	case strings.Contains(value, "hlg"):
 		return "HLG"
-	case strings.Contains(value, "dolby vision"):
-		return "Dolby Vision"
+	case strings.Contains(compatibility, "hdr10") || strings.Contains(value, "smpte st 2086"):
+		return "HDR10"
 	}
 	return ""
 }
