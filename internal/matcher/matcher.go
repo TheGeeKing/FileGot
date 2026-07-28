@@ -204,6 +204,7 @@ func movieCandidate(result tmdb.Movie, options settings.Settings) media.Candidat
 		ID: result.ID, Kind: media.Movie, Title: chooseTitle(result.Title, result.OriginalTitle, options.PreferOriginalTitle),
 		OriginalTitle: result.OriginalTitle, Year: dateYear(result.ReleaseDate),
 		PosterPath: result.PosterPath, Overview: result.Overview,
+		ReleaseDate: result.ReleaseDate,
 	}
 }
 
@@ -213,6 +214,7 @@ func showCandidate(result tmdb.Show, parsed media.Parsed, options settings.Setti
 		OriginalTitle: result.OriginalName, SeriesYear: dateYear(result.FirstAirDate),
 		PosterPath: result.PosterPath, Overview: result.Overview,
 		Season: parsed.Season, Episode: parsed.Episode,
+		OriginalLanguage: result.OriginalLanguage,
 	}
 }
 
@@ -366,8 +368,35 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 			return file
 		}
 		candidate.EpisodeTitle = chooseTitle(episode.Name, episode.OriginalName, options.PreferOriginalTitle)
+		candidate.EpisodeTMDBID = episode.ID
+		candidate.OriginalEpisodeTitle = episode.OriginalName
+		candidate.AirDate = episode.AirDate
+		candidate.Overview = episode.Overview
 		if candidate.EpisodeTitle == "" {
 			candidate.EpisodeTitle = fmt.Sprintf("Episode %02d", candidate.Episode)
+		}
+		if options.WriteEmbeddedMetadata && candidate.OriginalEpisodeTitle == "" &&
+			candidate.OriginalLanguage != "" {
+			original, err := matcher.client.EpisodeDetails(
+				ctx, candidate.ID, candidate.Season, candidate.Episode, candidate.OriginalLanguage,
+			)
+			if err != nil {
+				setError(&file, err)
+				return file
+			}
+			candidate.OriginalEpisodeTitle = original.Name
+		}
+		if options.WriteEmbeddedMetadata {
+			if err := enrichEpisodeEmbedded(ctx, matcher.client, &candidate, options); err != nil {
+				setError(&file, err)
+				return file
+			}
+		}
+	}
+	if candidate.Kind == media.Movie && options.WriteEmbeddedMetadata {
+		if err := enrichMovieEmbedded(ctx, matcher.client, &candidate, options); err != nil {
+			setError(&file, err)
+			return file
 		}
 	}
 
@@ -396,11 +425,125 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 	return file
 }
 
+func enrichMovieEmbedded(ctx context.Context, client *tmdb.Client, candidate *media.Candidate, options settings.Settings) error {
+	country := localeCountry(options.Language)
+	details, err := client.MovieDetails(ctx, candidate.ID, options.Language)
+	if err != nil {
+		return err
+	}
+	candidate.Genre = joinGenreNames(details.Genres)
+	dates, err := client.MovieReleaseDates(ctx, candidate.ID, country)
+	if err == nil {
+		regional := ""
+		for _, release := range dates {
+			date := release.Date
+			if len(date) >= 10 {
+				date = date[:10]
+			}
+			if date != "" && (regional == "" || date < regional) {
+				regional = date
+			}
+			if candidate.LawRating == "" && release.Certification != "" {
+				candidate.LawRating = release.Certification
+			}
+		}
+		if regional != "" {
+			candidate.ReleaseDate = regional
+		}
+	}
+	if year := dateYear(candidate.ReleaseDate); year > 0 {
+		candidate.Year = year
+	}
+	credits, err := client.MovieCredits(ctx, candidate.ID)
+	if err != nil {
+		return err
+	}
+	candidate.Directors, candidate.Writers, candidate.Actors = creditNames(credits, 5)
+	return nil
+}
+
+func enrichEpisodeEmbedded(ctx context.Context, client *tmdb.Client, candidate *media.Candidate, options settings.Settings) error {
+	country := localeCountry(options.Language)
+	show, err := client.ShowDetails(ctx, candidate.ID, options.Language)
+	if err != nil {
+		return err
+	}
+	candidate.Genre = joinGenreNames(show.Genres)
+	if rating, err := client.ShowContentRatings(ctx, candidate.ID, country); err == nil {
+		candidate.LawRating = rating
+	}
+	episodeCredits, err := client.EpisodeCredits(ctx, candidate.ID, candidate.Season, candidate.Episode)
+	if err != nil {
+		return err
+	}
+	directors, writers, _ := creditNames(episodeCredits, 0)
+	candidate.Directors = directors
+	candidate.Writers = writers
+	showCredits, err := client.ShowCredits(ctx, candidate.ID)
+	if err != nil {
+		return err
+	}
+	_, _, actors := creditNames(showCredits, 5)
+	candidate.Actors = actors
+	return nil
+}
+
+func joinGenreNames(genres []tmdb.Genre) string {
+	names := make([]string, 0, len(genres))
+	for _, genre := range genres {
+		if name := strings.TrimSpace(genre.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, "; ")
+}
+
+func creditNames(credits tmdb.Credits, actorLimit int) (directors, writers, actors []string) {
+	seenDirector := map[string]bool{}
+	seenWriter := map[string]bool{}
+	for _, member := range credits.Crew {
+		name := strings.TrimSpace(member.Name)
+		if name == "" {
+			continue
+		}
+		switch member.Job {
+		case "Director":
+			if !seenDirector[name] {
+				seenDirector[name] = true
+				directors = append(directors, name)
+			}
+		case "Writer", "Screenplay", "Story":
+			if !seenWriter[name] {
+				seenWriter[name] = true
+				writers = append(writers, name)
+			}
+		}
+	}
+	for _, member := range credits.Cast {
+		name := strings.TrimSpace(member.Name)
+		if name == "" {
+			continue
+		}
+		actors = append(actors, name)
+		if actorLimit > 0 && len(actors) >= actorLimit {
+			break
+		}
+	}
+	return directors, writers, actors
+}
+
 func templateFor(kind media.Kind, options settings.Settings) string {
 	if kind == media.Episode {
 		return options.EpisodeTemplate
 	}
 	return options.MovieTemplate
+}
+
+func localeCountry(language string) string {
+	if index := strings.LastIndex(language, "-"); index >= 0 {
+		return strings.ToUpper(language[index+1:])
+	}
+	return ""
 }
 
 func applyCandidates(ctx context.Context, file *media.File, candidates []media.Candidate, options settings.Settings, matcher *Matcher) {

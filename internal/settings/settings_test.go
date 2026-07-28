@@ -20,6 +20,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	value.MediaInfoExecutable = `C:\Tools\MediaInfo.exe`
 	value.IncludeSpecials = false
 	value.SortMatchedByStatus = true
+	value.WriteEmbeddedMetadata = true
 	if err := store.Save(value); err != nil {
 		t.Fatal(err)
 	}

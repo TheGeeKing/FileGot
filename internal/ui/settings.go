@@ -164,6 +164,8 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	ignoreHidden.SetChecked(current.IgnoreHidden)
 	sortMatchedByStatus := widget.NewCheck("Sort matched files by status", nil)
 	sortMatchedByStatus.SetChecked(current.SortMatchedByStatus)
+	writeEmbeddedMetadata := widget.NewCheck("Write embedded metadata to media files", nil)
+	writeEmbeddedMetadata.SetChecked(current.WriteEmbeddedMetadata)
 
 	validation := widget.NewLabel("")
 	validation.Wrapping = fyne.TextWrapWord
@@ -181,7 +183,8 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 			ScanSubfolders: scanSubfolders.Checked, AutoMatch: autoMatch.Checked,
 			IncludeSpecials: includeSpecials.Checked,
 			ConfirmRename:   confirmRename.Checked, IgnoreHidden: ignoreHidden.Checked,
-			SortMatchedByStatus: sortMatchedByStatus.Checked,
+			SortMatchedByStatus:   sortMatchedByStatus.Checked,
+			WriteEmbeddedMetadata: writeEmbeddedMetadata.Checked,
 		}
 	}
 
@@ -280,6 +283,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	confirmRename.OnChanged = func(bool) { refreshValidation() }
 	ignoreHidden.OnChanged = func(bool) { refreshValidation() }
 	sortMatchedByStatus.OnChanged = func(bool) { refreshValidation() }
+	writeEmbeddedMetadata.OnChanged = func(bool) { refreshValidation() }
 
 	testButton := widget.NewButton("Test Connection", nil)
 	testButton.OnTapped = func() {
@@ -360,6 +364,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		confirmRename,
 		ignoreHidden,
 		sortMatchedByStatus,
+		writeEmbeddedMetadata,
 	))
 
 	saveButton.OnTapped = func() {
@@ -395,6 +400,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		confirmRename.SetChecked(defaults.ConfirmRename)
 		ignoreHidden.SetChecked(defaults.IgnoreHidden)
 		sortMatchedByStatus.SetChecked(defaults.SortMatchedByStatus)
+		writeEmbeddedMetadata.SetChecked(defaults.WriteEmbeddedMetadata)
 		presetSelect.SetSelected(settings.PresetClean)
 		refreshNamingReferences()
 		refreshValidation()

@@ -27,22 +27,23 @@ const (
 var languagePattern = regexp.MustCompile(`^[a-z]{2,3}-[A-Z]{2}$`)
 
 type Settings struct {
-	TMDBToken           string
-	Language            string
-	PreferOriginalTitle bool
-	IncludeAdult        bool
-	MediaInfoExecutable string
-	NamingMode          string
-	MoviePattern        string
-	EpisodePattern      string
-	MovieTemplate       string
-	EpisodeTemplate     string
-	ScanSubfolders      bool
-	AutoMatch           bool
-	IncludeSpecials     bool
-	ConfirmRename       bool
-	IgnoreHidden        bool
-	SortMatchedByStatus bool
+	TMDBToken             string
+	Language              string
+	PreferOriginalTitle   bool
+	IncludeAdult          bool
+	MediaInfoExecutable   string
+	NamingMode            string
+	MoviePattern          string
+	EpisodePattern        string
+	MovieTemplate         string
+	EpisodeTemplate       string
+	ScanSubfolders        bool
+	AutoMatch             bool
+	IncludeSpecials       bool
+	ConfirmRename         bool
+	IgnoreHidden          bool
+	SortMatchedByStatus   bool
+	WriteEmbeddedMetadata bool
 }
 
 type Store struct {
@@ -96,22 +97,23 @@ func (store *Store) Load() Settings {
 	defaults := Defaults()
 	prefs := store.preferences
 	return Settings{
-		TMDBToken:           prefs.StringWithFallback("tmdb.token", defaults.TMDBToken),
-		Language:            prefs.StringWithFallback("tmdb.language", defaults.Language),
-		PreferOriginalTitle: prefs.BoolWithFallback("tmdb.prefer_original_title", defaults.PreferOriginalTitle),
-		IncludeAdult:        prefs.BoolWithFallback("tmdb.include_adult", defaults.IncludeAdult),
-		MediaInfoExecutable: configuredMediaInfo(prefs.StringWithFallback("mediainfo.executable", defaults.MediaInfoExecutable)),
-		NamingMode:          prefs.StringWithFallback("naming.mode", defaults.NamingMode),
-		MoviePattern:        prefs.StringWithFallback("naming.movie", defaults.MoviePattern),
-		EpisodePattern:      prefs.StringWithFallback("naming.episode", defaults.EpisodePattern),
-		MovieTemplate:       prefs.StringWithFallback("naming.advanced.movie", defaults.MovieTemplate),
-		EpisodeTemplate:     prefs.StringWithFallback("naming.advanced.episode", defaults.EpisodeTemplate),
-		ScanSubfolders:      prefs.BoolWithFallback("behavior.scan_subfolders", defaults.ScanSubfolders),
-		AutoMatch:           prefs.BoolWithFallback("behavior.auto_match", defaults.AutoMatch),
-		IncludeSpecials:     prefs.BoolWithFallback("behavior.include_specials", defaults.IncludeSpecials),
-		ConfirmRename:       prefs.BoolWithFallback("behavior.confirm_rename", defaults.ConfirmRename),
-		IgnoreHidden:        prefs.BoolWithFallback("behavior.ignore_hidden", defaults.IgnoreHidden),
-		SortMatchedByStatus: prefs.BoolWithFallback("behavior.sort_matched_by_status", defaults.SortMatchedByStatus),
+		TMDBToken:             prefs.StringWithFallback("tmdb.token", defaults.TMDBToken),
+		Language:              prefs.StringWithFallback("tmdb.language", defaults.Language),
+		PreferOriginalTitle:   prefs.BoolWithFallback("tmdb.prefer_original_title", defaults.PreferOriginalTitle),
+		IncludeAdult:          prefs.BoolWithFallback("tmdb.include_adult", defaults.IncludeAdult),
+		MediaInfoExecutable:   configuredMediaInfo(prefs.StringWithFallback("mediainfo.executable", defaults.MediaInfoExecutable)),
+		NamingMode:            prefs.StringWithFallback("naming.mode", defaults.NamingMode),
+		MoviePattern:          prefs.StringWithFallback("naming.movie", defaults.MoviePattern),
+		EpisodePattern:        prefs.StringWithFallback("naming.episode", defaults.EpisodePattern),
+		MovieTemplate:         prefs.StringWithFallback("naming.advanced.movie", defaults.MovieTemplate),
+		EpisodeTemplate:       prefs.StringWithFallback("naming.advanced.episode", defaults.EpisodeTemplate),
+		ScanSubfolders:        prefs.BoolWithFallback("behavior.scan_subfolders", defaults.ScanSubfolders),
+		AutoMatch:             prefs.BoolWithFallback("behavior.auto_match", defaults.AutoMatch),
+		IncludeSpecials:       prefs.BoolWithFallback("behavior.include_specials", defaults.IncludeSpecials),
+		ConfirmRename:         prefs.BoolWithFallback("behavior.confirm_rename", defaults.ConfirmRename),
+		IgnoreHidden:          prefs.BoolWithFallback("behavior.ignore_hidden", defaults.IgnoreHidden),
+		SortMatchedByStatus:   prefs.BoolWithFallback("behavior.sort_matched_by_status", defaults.SortMatchedByStatus),
+		WriteEmbeddedMetadata: prefs.BoolWithFallback("behavior.write_embedded_metadata", defaults.WriteEmbeddedMetadata),
 	}
 }
 
@@ -166,6 +168,7 @@ func (store *Store) Save(value Settings) error {
 	prefs.SetBool("behavior.confirm_rename", value.ConfirmRename)
 	prefs.SetBool("behavior.ignore_hidden", value.IgnoreHidden)
 	prefs.SetBool("behavior.sort_matched_by_status", value.SortMatchedByStatus)
+	prefs.SetBool("behavior.write_embedded_metadata", value.WriteEmbeddedMetadata)
 	return nil
 }
 

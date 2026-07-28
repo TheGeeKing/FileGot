@@ -280,7 +280,7 @@ func TestFileSelectionTransitions(t *testing.T) {
 func TestContextActionsFollowSelection(t *testing.T) {
 	application := &Application{
 		files: []media.File{
-			{Path: filepath.Join("media", "old.mkv"), Status: media.Ready, Proposed: "new.mkv"},
+			{Path: filepath.Join("media", "old.mkv"), Status: media.Ready, Proposed: "new.mkv", Candidate: media.Candidate{ID: 1}},
 			{Path: filepath.Join("media", "review.mkv"), Status: media.Review},
 		},
 		selected:        0,
@@ -288,18 +288,21 @@ func TestContextActionsFollowSelection(t *testing.T) {
 		selectedRows:    map[int]bool{0: true},
 	}
 
-	renameItem, reviewItem, removeItem := application.contextActions()
-	if renameItem.Disabled || reviewItem.Disabled || removeItem.Disabled {
-		t.Fatal("single ready row should expose Rename, Review, and Remove")
+	renameItem, metadataItem, reviewItem, removeItem := application.contextActions()
+	if renameItem.Disabled || metadataItem.Disabled || reviewItem.Disabled || removeItem.Disabled {
+		t.Fatal("single ready row should expose Rename, Write Metadata, Review, and Remove")
 	}
 
 	application.selectRow(1, fyne.KeyModifierControl)
-	renameItem, reviewItem, removeItem = application.contextActions()
+	renameItem, metadataItem, reviewItem, removeItem = application.contextActions()
 	if renameItem.Disabled {
 		t.Fatal("selection containing a ready row should expose Rename")
 	}
 	if !reviewItem.Disabled {
 		t.Fatal("Review should be unavailable for multiple rows")
+	}
+	if metadataItem.Disabled {
+		t.Fatal("Write Metadata should be available for the ready row")
 	}
 	if removeItem.Disabled {
 		t.Fatal("Remove should be available for multiple rows")
@@ -712,6 +715,87 @@ func TestRenameIgnoresAndRetainsUnpairedExpectedEpisodes(t *testing.T) {
 	}
 }
 
+func TestEmbeddedMetadataUsesMovieAndEpisodeFields(t *testing.T) {
+	movie := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Localized", OriginalTitle: "Original",
+		ReleaseDate: "2024-02-03", Overview: "Movie overview",
+		Genre: "Action", LawRating: "PG-13", Directors: []string{"Dir"}, Actors: []string{"Star"},
+	}})
+	if movie.Title != "Localized" || movie.OriginalTitle != "Original" ||
+		movie.Date != "2024-02-03" || movie.TMDBID != 1 || movie.Overview != "Movie overview" ||
+		movie.Genre != "Action" || movie.LawRating != "PG-13" ||
+		len(movie.Directors) != 1 || movie.Directors[0] != "Dir" {
+		t.Fatalf("movie metadata = %#v", movie)
+	}
+
+	episode := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 2, EpisodeTMDBID: 24, Kind: media.Episode, Title: "Series", EpisodeTitle: "Localized episode",
+		OriginalEpisodeTitle: "Original episode", AirDate: "2024-04-05",
+		Season: 3, Episode: 4, Overview: "Episode overview", Genre: "Drama",
+	}})
+	if episode.Title != "Localized episode" || episode.OriginalTitle != "Original episode" ||
+		episode.Date != "2024-04-05" || episode.Series != "Series" ||
+		episode.Season != 3 || episode.Episode != 4 || episode.TMDBID != 24 ||
+		episode.Genre != "Drama" {
+		t.Fatalf("episode metadata = %#v", episode)
+	}
+}
+
+func TestSameNameFileCanWritePendingMetadata(t *testing.T) {
+	application := &Application{
+		files: []media.File{{
+			Path: "same.mkv", Proposed: "same.mkv", Status: media.Ready,
+			Candidate:       media.Candidate{ID: 1, Kind: media.Movie, Title: "Movie"},
+			MetadataPending: true,
+		}},
+		selectedRows: map[int]bool{0: true},
+	}
+	operations := application.metadataOperations()
+	if len(operations) != 1 || operations[0].From != operations[0].To {
+		t.Fatalf("metadata operations = %#v", operations)
+	}
+	if rowStatus(application.files[0]) != media.Metadata {
+		t.Fatalf("row status = %q", rowStatus(application.files[0]))
+	}
+	application.files[0].MetadataPending = false
+	if rowStatus(application.files[0]) != media.SameName {
+		t.Fatalf("written same-name row status = %q", rowStatus(application.files[0]))
+	}
+}
+
+func TestUnsupportedMetadataResultOnlyAffectsSelectionAndCanBeCleared(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	options.WriteEmbeddedMetadata = true
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{
+		{Path: "selected.avi", Status: media.Ready, Proposed: "selected-new.avi"},
+		{Path: "other.avi", Status: media.Ready, Proposed: "other-new.avi"},
+	}
+	application.selectedRows = map[int]bool{0: true}
+	application.markUnsupportedMetadataRows()
+	if application.files[0].Status != media.Unsupported || application.files[1].Status != media.Ready {
+		t.Fatalf("statuses = %q, %q", application.files[0].Status, application.files[1].Status)
+	}
+
+	options.WriteEmbeddedMetadata = false
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	if err := application.refreshProposedNames(); err != nil {
+		t.Fatal(err)
+	}
+	if application.files[0].Status != media.Ready {
+		t.Fatal("disabling metadata should restore filename-only rename eligibility")
+	}
+}
+
 func TestUnchangedFileIsNeutralAndSkipped(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)
@@ -729,7 +813,7 @@ func TestUnchangedFileIsNeutralAndSkipped(t *testing.T) {
 	application.table.UpdateCell(widget.TableCellID{Row: 2, Col: 0}, cell)
 	background, _ := fileCellParts(cell)
 	neutral := statusRowColor(
-		media.Unsupported,
+		media.SameName,
 		theme.ColorForWidget(theme.ColorNameBackground, application.table),
 	)
 	if rgba(background.FillColor) != rgba(neutral) {

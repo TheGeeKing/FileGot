@@ -18,6 +18,8 @@ const (
 	Ready       Status = "ready"
 	Conflict    Status = "conflict"
 	Unsupported Status = "unsupported"
+	Metadata    Status = "metadata"
+	SameName    Status = "same name"
 	Error       Status = "error"
 )
 
@@ -31,29 +33,40 @@ type Parsed struct {
 }
 
 type Candidate struct {
-	ID            int
-	Kind          Kind
-	Title         string
-	OriginalTitle string
-	PosterPath    string
-	Overview      string
-	Year          int
-	SeriesYear    int
-	Season        int
-	Episode       int
-	EpisodeTitle  string
+	ID                   int
+	Kind                 Kind
+	Title                string
+	OriginalTitle        string
+	PosterPath           string
+	Overview             string
+	Year                 int
+	SeriesYear           int
+	Season               int
+	Episode              int
+	EpisodeTMDBID        int
+	EpisodeTitle         string
+	OriginalEpisodeTitle string
+	ReleaseDate          string
+	AirDate              string
+	OriginalLanguage     string
+	Genre                string
+	LawRating            string
+	Directors            []string
+	Writers              []string
+	Actors               []string
 }
 
 type File struct {
-	Path       string
-	Imported   bool
-	Parsed     Parsed
-	Candidate  Candidate
-	Candidates []Candidate
-	Proposed   string
-	Status     Status
-	Message    string
-	Technical  mediainfo.Metadata
+	Path            string
+	Imported        bool
+	Parsed          Parsed
+	Candidate       Candidate
+	Candidates      []Candidate
+	Proposed        string
+	Status          Status
+	Message         string
+	Technical       mediainfo.Metadata
+	MetadataPending bool
 }
 
 func (file File) IsExpectedEpisode() bool {

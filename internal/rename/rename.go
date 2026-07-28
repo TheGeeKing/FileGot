@@ -16,14 +16,16 @@ import (
 const journalVersion = 1
 
 type Operation struct {
-	From string
-	To   string
+	From      string
+	To        string
+	Transform func(input, output string) error
 }
 
 type journalOperation struct {
-	From string `json:"from"`
-	Temp string `json:"temp"`
-	To   string `json:"to"`
+	From   string `json:"from"`
+	Temp   string `json:"temp"`
+	To     string `json:"to"`
+	Tagged string `json:"tagged,omitempty"`
 }
 
 type journal struct {
@@ -61,6 +63,7 @@ func (manager *Manager) Apply(operations []Operation) error {
 	if len(record.Ops) == 0 {
 		return errors.New("no filename changes to apply")
 	}
+	previous, _ := manager.readJournal()
 	if err := manager.writeJournal(record); err != nil {
 		return fmt.Errorf("write rename journal: %w", err)
 	}
@@ -75,6 +78,13 @@ func (manager *Manager) Apply(operations []Operation) error {
 		}
 		return errors.Join(fmt.Errorf("durable undo could not be finalized; rename was reverted: %w", err), rollbackErr)
 	}
+	if previous.State == "applied" {
+		for _, operation := range previous.Ops {
+			if operation.Tagged != "" {
+				_ = os.Remove(operation.Temp)
+			}
+		}
+	}
 	return nil
 }
 
@@ -85,6 +95,11 @@ func (manager *Manager) Undo() error {
 	}
 	if applied.State != "applied" || applied.Mode != "apply" {
 		return errors.New("there is no completed rename to undo")
+	}
+	for _, operation := range applied.Ops {
+		if operation.Tagged != "" {
+			return manager.undoTransformed(applied)
+		}
 	}
 
 	operations := make([]Operation, 0, len(applied.Ops))
@@ -100,6 +115,65 @@ func (manager *Manager) Undo() error {
 	}
 	if err := manager.execute(record); err != nil {
 		return err
+	}
+	if err := os.Remove(manager.journalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("undo succeeded but history could not be cleared: %w", err)
+	}
+	return nil
+}
+
+func (manager *Manager) undoTransformed(applied journal) error {
+	staged := make([]string, len(applied.Ops))
+	for index, operation := range applied.Ops {
+		if !exists(operation.To) || (exists(operation.From) && !samePath(operation.From, operation.To)) ||
+			(operation.Tagged != "" && !exists(operation.Temp)) {
+			return fmt.Errorf("cannot undo %s", operation.To)
+		}
+		path, err := temporaryPath(filepath.Dir(operation.To))
+		if err != nil {
+			return err
+		}
+		staged[index] = path
+	}
+	for index, operation := range applied.Ops {
+		if err := manager.rename(operation.To, staged[index]); err != nil {
+			for rollback := index - 1; rollback >= 0; rollback-- {
+				_ = manager.rename(staged[rollback], applied.Ops[rollback].To)
+			}
+			return fmt.Errorf("stage undo %s: %w", operation.To, err)
+		}
+	}
+	for index, operation := range applied.Ops {
+		source := staged[index]
+		if operation.Tagged != "" {
+			source = operation.Temp
+		}
+		if err := manager.rename(source, operation.From); err != nil {
+			var rollbackErrors []error
+			for rollback := index - 1; rollback >= 0; rollback-- {
+				prior := applied.Ops[rollback]
+				if prior.Tagged != "" {
+					if rollbackErr := manager.rename(prior.From, prior.Temp); rollbackErr != nil {
+						rollbackErrors = append(rollbackErrors, rollbackErr)
+					}
+				} else if rollbackErr := manager.rename(prior.From, prior.To); rollbackErr != nil {
+					rollbackErrors = append(rollbackErrors, rollbackErr)
+				}
+			}
+			for rollback, prior := range applied.Ops {
+				if exists(staged[rollback]) {
+					if rollbackErr := manager.rename(staged[rollback], prior.To); rollbackErr != nil {
+						rollbackErrors = append(rollbackErrors, rollbackErr)
+					}
+				}
+			}
+			return errors.Join(fmt.Errorf("restore %s: %w", operation.From, err), errors.Join(rollbackErrors...))
+		}
+	}
+	for index, operation := range applied.Ops {
+		if operation.Tagged != "" {
+			_ = os.Remove(staged[index])
+		}
 	}
 	if err := os.Remove(manager.journalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("undo succeeded but history could not be cleared: %w", err)
@@ -141,14 +215,28 @@ func (manager *Manager) prepare(operations []Operation, mode string) (journal, e
 	for _, operation := range operations {
 		from, _ := filepath.Abs(operation.From)
 		to, _ := filepath.Abs(operation.To)
-		if samePath(from, to) && from == to {
+		if samePath(from, to) && from == to && operation.Transform == nil {
 			continue
 		}
 		temp, err := temporaryPath(filepath.Dir(from))
 		if err != nil {
 			return record, err
 		}
-		record.Ops = append(record.Ops, journalOperation{From: from, Temp: temp, To: to})
+		item := journalOperation{From: from, Temp: temp, To: to}
+		if operation.Transform != nil {
+			item.Tagged, err = temporaryMediaPath(filepath.Dir(from), filepath.Ext(from))
+			if err == nil {
+				err = operation.Transform(from, item.Tagged)
+			}
+			if err != nil {
+				for _, prepared := range record.Ops {
+					_ = os.Remove(prepared.Tagged)
+				}
+				_ = os.Remove(item.Tagged)
+				return record, fmt.Errorf("prepare metadata for %s: %w", from, err)
+			}
+		}
+		record.Ops = append(record.Ops, item)
 	}
 	return record, nil
 }
@@ -212,7 +300,11 @@ func (manager *Manager) execute(record journal) error {
 		record.Ops[index] = operation
 	}
 	for _, operation := range record.Ops {
-		if err := manager.rename(operation.Temp, operation.To); err != nil {
+		source := operation.Temp
+		if operation.Tagged != "" {
+			source = operation.Tagged
+		}
+		if err := manager.rename(source, operation.To); err != nil {
 			rollbackErr := manager.rollback(record)
 			return errors.Join(fmt.Errorf("rename %s: %w", operation.From, err), rollbackErr)
 		}
@@ -224,6 +316,22 @@ func (manager *Manager) rollback(record journal) error {
 	var rollbackErrors []error
 	for index := len(record.Ops) - 1; index >= 0; index-- {
 		operation := record.Ops[index]
+		if operation.Tagged != "" {
+			if !exists(operation.Temp) {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("original backup is missing for %s", operation.From))
+				continue
+			}
+			if exists(operation.To) {
+				_ = os.Remove(operation.To)
+			}
+			_ = os.Remove(operation.Tagged)
+			if exists(operation.Temp) && !exists(operation.From) {
+				if err := manager.rename(operation.Temp, operation.From); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("%s -> %s: %w", operation.Temp, operation.From, err))
+				}
+			}
+			continue
+		}
 		switch {
 		case exists(operation.To) && !exists(operation.From):
 			if err := manager.rename(operation.To, operation.From); err != nil {
@@ -280,6 +388,11 @@ func temporaryPath(directory string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(directory, ".filegot-"+hex.EncodeToString(random[:])+".tmp"), nil
+}
+
+func temporaryMediaPath(directory, extension string) (string, error) {
+	path, err := temporaryPath(directory)
+	return strings.TrimSuffix(path, ".tmp") + extension, err
 }
 
 func pathKey(path string) string {
