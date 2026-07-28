@@ -41,6 +41,21 @@ func TestSupportedContainers(t *testing.T) {
 	}
 }
 
+func TestValuesFilteredKeepsOnlySelectedFields(t *testing.T) {
+	values := Values{
+		Title: "T", OriginalTitle: "O", Date: "2024-01-02", Overview: "Story",
+		Genre: "Drama", LawRating: "PG", TMDBID: 7, Series: "Show", Season: 1, Episode: 2,
+		Directors: []string{"D"}, Writers: []string{"W"}, Actors: []string{"A"}, IsEpisode: true,
+	}
+	fields := WriteFields{Title: true, Comment: true}
+	got := values.Filtered(fields)
+	if got.Title != "T" || got.Overview != "Story" || got.OriginalTitle != "" ||
+		got.Date != "" || got.Genre != "" || got.Series != "" || got.TMDBID != 0 ||
+		len(got.Directors) != 0 || !got.IsEpisode {
+		t.Fatalf("filtered = %#v", got)
+	}
+}
+
 func TestDiffersComparesRequestedMetadata(t *testing.T) {
 	writer := &Writer{run: func(_ string, _ ...string) ([]byte, error) {
 		return []byte(`{"format":{"tags":{"TITLE":"Pilot","tmdb_id":"42"}}}`), nil

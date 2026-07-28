@@ -25,6 +25,70 @@ type Values struct {
 	Directors     []string
 	Writers       []string
 	Actors        []string
+	IsEpisode     bool
+}
+
+// WriteFields selects which Values are written into a container.
+type WriteFields struct {
+	Title         bool
+	OriginalTitle bool
+	Comment       bool
+	DateReleased  bool
+	Genre         bool
+	LawRating     bool
+	Directors     bool
+	Writers       bool
+	Actors        bool
+	TMDBID        bool
+	SeriesInfo    bool
+}
+
+func AllWriteFields() WriteFields {
+	return WriteFields{
+		Title: true, OriginalTitle: true, Comment: true, DateReleased: true,
+		Genre: true, LawRating: true, Directors: true, Writers: true,
+		Actors: true, TMDBID: true, SeriesInfo: true,
+	}
+}
+
+func (values Values) Filtered(fields WriteFields) Values {
+	filtered := Values{IsEpisode: values.IsEpisode}
+	if fields.Title {
+		filtered.Title = values.Title
+	}
+	if fields.OriginalTitle {
+		filtered.OriginalTitle = values.OriginalTitle
+	}
+	if fields.Comment {
+		filtered.Overview = values.Overview
+	}
+	if fields.DateReleased {
+		filtered.Date = values.Date
+	}
+	if fields.Genre {
+		filtered.Genre = values.Genre
+	}
+	if fields.LawRating {
+		filtered.LawRating = values.LawRating
+	}
+	if fields.Directors {
+		filtered.Directors = append([]string(nil), values.Directors...)
+	}
+	if fields.Writers {
+		filtered.Writers = append([]string(nil), values.Writers...)
+	}
+	if fields.Actors {
+		filtered.Actors = append([]string(nil), values.Actors...)
+	}
+	if fields.TMDBID {
+		filtered.TMDBID = values.TMDBID
+	}
+	if fields.SeriesInfo {
+		filtered.Series = values.Series
+		filtered.Season = values.Season
+		filtered.Episode = values.Episode
+	}
+	return filtered
 }
 
 type Writer struct {

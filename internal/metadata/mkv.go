@@ -141,7 +141,7 @@ func (writer *Writer) mkvDiffers(path string, values Values) (bool, error) {
 }
 
 func mergeMatroskaTags(tags *matroskaTags, values Values) {
-	episode := values.Series != ""
+	episode := values.IsEpisode
 	if episode {
 		upsertMatroska(tags, 70, "TITLE", values.Series, episode)
 		upsertMatroska(tags, 60, "PART_NUMBER", optionalInt(values.Season), episode)
@@ -173,6 +173,9 @@ func expectedMatroskaTags(values Values) map[string]string {
 	}
 	if values.Series != "" {
 		expected["70:TITLE"] = values.Series
+		expected["60:PART_NUMBER"] = optionalInt(values.Season)
+		expected["50:PART_NUMBER"] = optionalInt(values.Episode)
+	} else if values.IsEpisode {
 		expected["60:PART_NUMBER"] = optionalInt(values.Season)
 		expected["50:PART_NUMBER"] = optionalInt(values.Episode)
 	}

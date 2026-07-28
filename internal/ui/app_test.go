@@ -20,6 +20,7 @@ import (
 
 	"github.com/TheGeeKing/FileGot/internal/matcher"
 	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/metadata"
 	"github.com/TheGeeKing/FileGot/internal/rename"
 	"github.com/TheGeeKing/FileGot/internal/settings"
 	"github.com/TheGeeKing/FileGot/internal/tmdb"
@@ -716,11 +717,12 @@ func TestRenameIgnoresAndRetainsUnpairedExpectedEpisodes(t *testing.T) {
 }
 
 func TestEmbeddedMetadataUsesMovieAndEpisodeFields(t *testing.T) {
+	fields := metadata.AllWriteFields()
 	movie := embeddedMetadata(media.File{Candidate: media.Candidate{
 		ID: 1, Kind: media.Movie, Title: "Localized", OriginalTitle: "Original",
 		ReleaseDate: "2024-02-03", Overview: "Movie overview",
 		Genre: "Action", LawRating: "PG-13", Directors: []string{"Dir"}, Actors: []string{"Star"},
-	}})
+	}}, fields)
 	if movie.Title != "Localized" || movie.OriginalTitle != "Original" ||
 		movie.Date != "2024-02-03" || movie.TMDBID != 1 || movie.Overview != "Movie overview" ||
 		movie.Genre != "Action" || movie.LawRating != "PG-13" ||
@@ -732,12 +734,32 @@ func TestEmbeddedMetadataUsesMovieAndEpisodeFields(t *testing.T) {
 		ID: 2, EpisodeTMDBID: 24, Kind: media.Episode, Title: "Series", EpisodeTitle: "Localized episode",
 		OriginalEpisodeTitle: "Original episode", AirDate: "2024-04-05",
 		Season: 3, Episode: 4, Overview: "Episode overview", Genre: "Drama",
-	}})
+	}}, fields)
 	if episode.Title != "Localized episode" || episode.OriginalTitle != "Original episode" ||
 		episode.Date != "2024-04-05" || episode.Series != "Series" ||
 		episode.Season != 3 || episode.Episode != 4 || episode.TMDBID != 24 ||
-		episode.Genre != "Drama" {
+		episode.Genre != "Drama" || !episode.IsEpisode {
 		t.Fatalf("episode metadata = %#v", episode)
+	}
+
+	titleOnly := fields
+	titleOnly.OriginalTitle = false
+	titleOnly.Comment = false
+	titleOnly.DateReleased = false
+	titleOnly.Genre = false
+	titleOnly.LawRating = false
+	titleOnly.Directors = false
+	titleOnly.Writers = false
+	titleOnly.Actors = false
+	titleOnly.TMDBID = false
+	titleOnly.SeriesInfo = false
+	filtered := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Localized", OriginalTitle: "Original",
+		ReleaseDate: "2024-02-03", Overview: "Movie overview", Genre: "Action",
+	}}, titleOnly)
+	if filtered.Title != "Localized" || filtered.Overview != "" || filtered.Genre != "" ||
+		filtered.Date != "" || filtered.TMDBID != 0 {
+		t.Fatalf("title-only metadata = %#v", filtered)
 	}
 }
 

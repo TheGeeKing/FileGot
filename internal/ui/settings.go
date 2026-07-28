@@ -11,6 +11,7 @@ import (
 
 	"github.com/TheGeeKing/FileGot/internal/media"
 	"github.com/TheGeeKing/FileGot/internal/mediainfo"
+	"github.com/TheGeeKing/FileGot/internal/metadata"
 	"github.com/TheGeeKing/FileGot/internal/settings"
 	"github.com/TheGeeKing/FileGot/internal/tmdb"
 )
@@ -166,6 +167,48 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	sortMatchedByStatus.SetChecked(current.SortMatchedByStatus)
 	writeEmbeddedMetadata := widget.NewCheck("Write embedded metadata to media files", nil)
 	writeEmbeddedMetadata.SetChecked(current.WriteEmbeddedMetadata)
+	fields := current.EmbeddedMetadataFields
+	fieldTitle := widget.NewCheck("Title", nil)
+	fieldTitle.SetChecked(fields.Title)
+	fieldOriginalTitle := widget.NewCheck("Original title", nil)
+	fieldOriginalTitle.SetChecked(fields.OriginalTitle)
+	fieldComment := widget.NewCheck("Comment / overview", nil)
+	fieldComment.SetChecked(fields.Comment)
+	fieldDateReleased := widget.NewCheck("Date released", nil)
+	fieldDateReleased.SetChecked(fields.DateReleased)
+	fieldGenre := widget.NewCheck("Genre", nil)
+	fieldGenre.SetChecked(fields.Genre)
+	fieldLawRating := widget.NewCheck("Content rating", nil)
+	fieldLawRating.SetChecked(fields.LawRating)
+	fieldDirectors := widget.NewCheck("Directors", nil)
+	fieldDirectors.SetChecked(fields.Directors)
+	fieldWriters := widget.NewCheck("Writers", nil)
+	fieldWriters.SetChecked(fields.Writers)
+	fieldActors := widget.NewCheck("Actors", nil)
+	fieldActors.SetChecked(fields.Actors)
+	fieldTMDBID := widget.NewCheck("TMDB ID", nil)
+	fieldTMDBID.SetChecked(fields.TMDBID)
+	fieldSeriesInfo := widget.NewCheck("Series / season / episode numbers", nil)
+	fieldSeriesInfo.SetChecked(fields.SeriesInfo)
+	fieldChecks := []*widget.Check{
+		fieldTitle, fieldOriginalTitle, fieldComment, fieldDateReleased, fieldGenre,
+		fieldLawRating, fieldDirectors, fieldWriters, fieldActors, fieldTMDBID, fieldSeriesInfo,
+	}
+	setEmbeddedFieldEnabled := func(enabled bool) {
+		for _, check := range fieldChecks {
+			if enabled {
+				check.Enable()
+			} else {
+				check.Disable()
+			}
+		}
+	}
+	setEmbeddedFieldEnabled(current.WriteEmbeddedMetadata)
+	embeddedFieldsBox := container.NewVBox(
+		widget.NewLabel("Fields to write:"),
+		fieldTitle, fieldOriginalTitle, fieldComment, fieldDateReleased, fieldGenre,
+		fieldLawRating, fieldDirectors, fieldWriters, fieldActors, fieldTMDBID, fieldSeriesInfo,
+	)
 
 	validation := widget.NewLabel("")
 	validation.Wrapping = fyne.TextWrapWord
@@ -185,6 +228,14 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 			ConfirmRename:   confirmRename.Checked, IgnoreHidden: ignoreHidden.Checked,
 			SortMatchedByStatus:   sortMatchedByStatus.Checked,
 			WriteEmbeddedMetadata: writeEmbeddedMetadata.Checked,
+			EmbeddedMetadataFields: metadata.WriteFields{
+				Title: fieldTitle.Checked, OriginalTitle: fieldOriginalTitle.Checked,
+				Comment: fieldComment.Checked, DateReleased: fieldDateReleased.Checked,
+				Genre: fieldGenre.Checked, LawRating: fieldLawRating.Checked,
+				Directors: fieldDirectors.Checked, Writers: fieldWriters.Checked,
+				Actors: fieldActors.Checked, TMDBID: fieldTMDBID.Checked,
+				SeriesInfo: fieldSeriesInfo.Checked,
+			},
 		}
 	}
 
@@ -283,7 +334,13 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	confirmRename.OnChanged = func(bool) { refreshValidation() }
 	ignoreHidden.OnChanged = func(bool) { refreshValidation() }
 	sortMatchedByStatus.OnChanged = func(bool) { refreshValidation() }
-	writeEmbeddedMetadata.OnChanged = func(bool) { refreshValidation() }
+	writeEmbeddedMetadata.OnChanged = func(enabled bool) {
+		setEmbeddedFieldEnabled(enabled)
+		refreshValidation()
+	}
+	for _, check := range fieldChecks {
+		check.OnChanged = func(bool) { refreshValidation() }
+	}
 
 	testButton := widget.NewButton("Test Connection", nil)
 	testButton.OnTapped = func() {
@@ -365,6 +422,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		ignoreHidden,
 		sortMatchedByStatus,
 		writeEmbeddedMetadata,
+		container.NewPadded(embeddedFieldsBox),
 	))
 
 	saveButton.OnTapped = func() {
@@ -401,6 +459,19 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 		ignoreHidden.SetChecked(defaults.IgnoreHidden)
 		sortMatchedByStatus.SetChecked(defaults.SortMatchedByStatus)
 		writeEmbeddedMetadata.SetChecked(defaults.WriteEmbeddedMetadata)
+		defaultsFields := defaults.EmbeddedMetadataFields
+		fieldTitle.SetChecked(defaultsFields.Title)
+		fieldOriginalTitle.SetChecked(defaultsFields.OriginalTitle)
+		fieldComment.SetChecked(defaultsFields.Comment)
+		fieldDateReleased.SetChecked(defaultsFields.DateReleased)
+		fieldGenre.SetChecked(defaultsFields.Genre)
+		fieldLawRating.SetChecked(defaultsFields.LawRating)
+		fieldDirectors.SetChecked(defaultsFields.Directors)
+		fieldWriters.SetChecked(defaultsFields.Writers)
+		fieldActors.SetChecked(defaultsFields.Actors)
+		fieldTMDBID.SetChecked(defaultsFields.TMDBID)
+		fieldSeriesInfo.SetChecked(defaultsFields.SeriesInfo)
+		setEmbeddedFieldEnabled(defaults.WriteEmbeddedMetadata)
 		presetSelect.SetSelected(settings.PresetClean)
 		refreshNamingReferences()
 		refreshValidation()

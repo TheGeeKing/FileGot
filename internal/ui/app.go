@@ -1240,7 +1240,7 @@ func (application *Application) renameOperations() []rename.Operation {
 		}
 		operation := rename.Operation{From: file.Path, To: matcher.Destination(file)}
 		if options.WriteEmbeddedMetadata && metadata.Supported(file.Path) {
-			values := embeddedMetadata(file)
+			values := embeddedMetadata(file, application.embeddedMetadataFields())
 			operation.Transform = func(input, output string) error {
 				return application.metadataWriter.Write(input, output, values)
 			}
@@ -1250,7 +1250,7 @@ func (application *Application) renameOperations() []rename.Operation {
 	return operations
 }
 
-func embeddedMetadata(file media.File) metadata.Values {
+func embeddedMetadata(file media.File, fields metadata.WriteFields) metadata.Values {
 	candidate := file.Candidate
 	values := metadata.Values{
 		Title: candidate.Title, OriginalTitle: candidate.OriginalTitle,
@@ -1268,8 +1268,16 @@ func embeddedMetadata(file media.File) metadata.Values {
 		values.Season = candidate.Season
 		values.Episode = candidate.Episode
 		values.TMDBID = candidate.EpisodeTMDBID
+		values.IsEpisode = true
 	}
-	return values
+	return values.Filtered(fields)
+}
+
+func (application *Application) embeddedMetadataFields() metadata.WriteFields {
+	if application.settings == nil {
+		return metadata.AllWriteFields()
+	}
+	return application.settings.Load().EmbeddedMetadataFields
 }
 
 func (application *Application) markMetadataPending(files []media.File) {
@@ -1278,7 +1286,9 @@ func (application *Application) markMetadataPending(files []media.File) {
 		if file.Path == "" || file.Status != media.Ready || !metadata.Supported(file.Path) {
 			continue
 		}
-		file.MetadataPending, _ = application.metadataWriter.Differs(file.Path, embeddedMetadata(*file))
+		file.MetadataPending, _ = application.metadataWriter.Differs(
+			file.Path, embeddedMetadata(*file, application.embeddedMetadataFields()),
+		)
 	}
 }
 
@@ -1291,7 +1301,7 @@ func (application *Application) metadataOperations() []rename.Operation {
 		if file.Path == "" || file.Status != media.Ready || file.Candidate.ID == 0 || !metadata.Supported(file.Path) {
 			continue
 		}
-		values := embeddedMetadata(file)
+		values := embeddedMetadata(file, application.embeddedMetadataFields())
 		operations = append(operations, rename.Operation{
 			From: file.Path, To: file.Path,
 			Transform: func(input, output string) error {
@@ -1308,10 +1318,11 @@ func (application *Application) writeMetadata() {
 		return
 	}
 	valuesByPath := make(map[string]metadata.Values, len(operations))
+	fields := application.embeddedMetadataFields()
 	for _, operation := range operations {
 		for _, file := range application.files {
 			if pathKey(file.Path) == pathKey(operation.From) {
-				valuesByPath[pathKey(operation.From)] = embeddedMetadata(file)
+				valuesByPath[pathKey(operation.From)] = embeddedMetadata(file, fields)
 				break
 			}
 		}

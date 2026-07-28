@@ -18,7 +18,7 @@ func TestMergeMatroskaTagsUsesSpecTargetsAndPreservesExistingTags(t *testing.T) 
 	mergeMatroskaTags(&tags, Values{
 		Title: "Pilot", OriginalTitle: "Original Pilot", Date: "2024-01-02",
 		Series: "Show", Season: 1, Episode: 2, TMDBID: 42, Overview: "Story",
-		Genre: "Drama", LawRating: "TV-14",
+		Genre: "Drama", LawRating: "TV-14", IsEpisode: true,
 		Directors: []string{"Dir"}, Writers: []string{"Writer"}, Actors: []string{"A", "B"},
 	})
 	got := matroskaTagMap(tags)
@@ -114,7 +114,7 @@ func TestWriteMKVInPlaceIntegration(t *testing.T) {
 	values := Values{
 		Title: "Pilot", OriginalTitle: "Original Pilot", Date: "2024-01-02",
 		Series: "Show", Season: 1, Episode: 2, TMDBID: 42, Overview: "Story",
-		Genre: "Drama", LawRating: "TV-14",
+		Genre: "Drama", LawRating: "TV-14", IsEpisode: true,
 		Directors: []string{"Dir"}, Actors: []string{"Actor"},
 	}
 	writer := NewWriter()
