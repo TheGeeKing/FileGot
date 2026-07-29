@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var (
@@ -15,6 +16,7 @@ var (
 	yearPattern          = regexp.MustCompile(`(?:^|[\s._([{-])((?:19|20)\d{2})(?:$|[\s._)\]}-])`)
 	seasonFolderPattern  = regexp.MustCompile(`(?i)^(?:s(?:eason)?|saison)\s*\d+$`)
 	bracketPattern       = regexp.MustCompile(`[\[\{][^\]\}]*[\]\}]`)
+	emptyParenPattern    = regexp.MustCompile(`\(\s*\)`)
 	idContainerPattern   = regexp.MustCompile(`\[[^\]]+\]|\{[^}]+\}|\([^)]*\)`)
 	idMarkerPattern      = regexp.MustCompile(`(?i)^(?:(tmdb|tvdb)-([1-9]\d*)|(?:imdb-)?(tt[1-9]\d*))$`)
 	spacePattern         = regexp.MustCompile(`\s+`)
@@ -39,6 +41,18 @@ var releaseTags = map[string]struct{}{
 	"hdtv": {}, "dvdrip": {}, "remux": {}, "x264": {}, "x265": {}, "h264": {},
 	"h265": {}, "hevc": {}, "av1": {}, "hdr": {}, "dv": {}, "aac": {}, "dts": {},
 	"truehd": {}, "atmos": {},
+	// Unambiguous scene language / audio tags (safe case-insensitive).
+	"truefrench": {}, "vostfr": {}, "vff": {}, "vfi": {}, "vfq": {}, "vf2": {},
+	"multi": {}, "dual": {}, "dubbed": {}, "subbed": {},
+}
+
+// Language words that also appear in real titles. Only strip when the token is
+// fully uppercase in the release name (e.g. FRENCH), not title case (French).
+var uppercaseLanguageTags = map[string]struct{}{
+	"french": {}, "english": {}, "german": {}, "italian": {}, "spanish": {},
+	"japanese": {}, "korean": {}, "chinese": {}, "dutch": {}, "russian": {},
+	"nordic": {}, "latin": {}, "portuguese": {}, "polish": {}, "swedish": {},
+	"danish": {}, "norwegian": {}, "finnish": {}, "arabic": {}, "hindi": {},
 }
 
 func Parse(path string) Parsed {
@@ -149,18 +163,39 @@ func titleAndYear(value string) (string, int) {
 
 func cleanTitle(value string) string {
 	value = bracketPattern.ReplaceAllString(value, " ")
+	value = emptyParenPattern.ReplaceAllString(value, " ")
 	value = strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(value)
 
 	words := strings.Fields(value)
 	for i, word := range words {
-		normalized := strings.ToLower(strings.Trim(word, " ._-"))
+		trimmed := strings.Trim(word, " ._-")
+		normalized := strings.ToLower(trimmed)
 		if _, found := releaseTags[normalized]; found {
+			words = words[:i]
+			break
+		}
+		if _, found := uppercaseLanguageTags[normalized]; found && isUpperToken(trimmed) {
 			words = words[:i]
 			break
 		}
 	}
 
-	return strings.TrimSpace(spacePattern.ReplaceAllString(strings.Join(words, " "), " "))
+	cleaned := strings.TrimSpace(spacePattern.ReplaceAllString(strings.Join(words, " "), " "))
+	return strings.TrimSpace(emptyParenPattern.ReplaceAllString(cleaned, " "))
+}
+
+func isUpperToken(value string) bool {
+	hasLetter := false
+	for _, r := range value {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		hasLetter = true
+		if !unicode.IsUpper(r) {
+			return false
+		}
+	}
+	return hasLetter
 }
 
 func atoi(value string) int {
