@@ -38,6 +38,11 @@ func TestParse(t *testing.T) {
 			want: Parsed{Kind: Movie, Query: "Astérix et les Indiens", Year: 1994},
 		},
 		{
+			name: "nfd accents normalized for TMDB search",
+			path: "Aste\u0301rix et les Indiens (1994).mkv",
+			want: Parsed{Kind: Movie, Query: "Astérix et les Indiens", Year: 1994},
+		},
+		{
 			name: "season episode",
 			path: "The.Last.of.Us.S01E03.1080p.mkv",
 			want: Parsed{Kind: Episode, Query: "The Last of Us", Season: 1, Episode: 3},

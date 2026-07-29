@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 var (
@@ -162,6 +164,8 @@ func titleAndYear(value string) (string, int) {
 }
 
 func cleanTitle(value string) string {
+	// Windows paths often store accents as NFD; TMDB search only matches NFC.
+	value = norm.NFC.String(value)
 	value = bracketPattern.ReplaceAllString(value, " ")
 	value = emptyParenPattern.ReplaceAllString(value, " ")
 	value = strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(value)
