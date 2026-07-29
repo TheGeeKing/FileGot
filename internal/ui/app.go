@@ -1198,10 +1198,17 @@ func (application *Application) applyRename() {
 		application.refresh()
 		return
 	}
+	mkvMetadata := application.mkvMetadataBeforeRename(operations)
 	application.busy = true
 	application.setStatus("Renaming files…")
 	application.updateButtons()
 	go func() {
+		var writeErrors []error
+		for path, values := range mkvMetadata {
+			if err := application.metadataWriter.WriteMKVInPlace(path, values); err != nil {
+				writeErrors = append(writeErrors, fmt.Errorf("%s: %w", path, err))
+			}
+		}
 		err := application.renamer.Apply(operations)
 		fyne.Do(func() {
 			application.busy = false
@@ -1218,7 +1225,20 @@ func (application *Application) applyRename() {
 				application.files = remainingAfterRename(application.files, operations)
 				application.markUnsupportedMetadataRows()
 				application.clearSelection()
-				application.setStatus(fmt.Sprintf("Renamed %d file(s). Undo Last is available.", len(operations)))
+				status := fmt.Sprintf("Renamed %d file(s). Undo Last is available.", len(operations))
+				if len(writeErrors) > 0 {
+					dialog.ShowError(errors.Join(writeErrors...), application.window)
+					status = fmt.Sprintf(
+						"Renamed %d file(s); MKV metadata writing had errors. Undo Last restores names only.",
+						len(operations),
+					)
+				} else if len(mkvMetadata) > 0 {
+					status = fmt.Sprintf(
+						"Renamed %d file(s) and wrote MKV metadata. Undo Last restores names only.",
+						len(operations),
+					)
+				}
+				application.setStatus(status)
 			}
 			application.refresh()
 		})
@@ -1239,7 +1259,8 @@ func (application *Application) renameOperations() []rename.Operation {
 			continue
 		}
 		operation := rename.Operation{From: file.Path, To: matcher.Destination(file)}
-		if options.WriteEmbeddedMetadata && metadata.Supported(file.Path) {
+		// MKV is tagged in place before rename (no full-file copy). Remux containers still use Transform.
+		if options.WriteEmbeddedMetadata && metadata.Supported(file.Path) && !metadata.WritesInPlace(file.Path) {
 			values := embeddedMetadata(file, application.embeddedMetadataFields())
 			operation.Transform = func(input, output string) error {
 				return application.metadataWriter.Write(input, output, values)
@@ -1248,6 +1269,31 @@ func (application *Application) renameOperations() []rename.Operation {
 		operations = append(operations, operation)
 	}
 	return operations
+}
+
+func (application *Application) mkvMetadataBeforeRename(operations []rename.Operation) map[string]metadata.Values {
+	options := settings.Defaults()
+	if application.settings != nil {
+		options = application.settings.Load()
+	}
+	if !options.WriteEmbeddedMetadata {
+		return nil
+	}
+	fields := application.embeddedMetadataFields()
+	pending := make(map[string]metadata.Values)
+	for _, operation := range operations {
+		if !metadata.WritesInPlace(operation.From) {
+			continue
+		}
+		for _, file := range application.files {
+			if pathKey(file.Path) != pathKey(operation.From) {
+				continue
+			}
+			pending[operation.From] = embeddedMetadata(file, fields)
+			break
+		}
+	}
+	return pending
 }
 
 func embeddedMetadata(file media.File, fields metadata.WriteFields) metadata.Values {
@@ -1302,12 +1348,13 @@ func (application *Application) metadataOperations() []rename.Operation {
 			continue
 		}
 		values := embeddedMetadata(file, application.embeddedMetadataFields())
-		operations = append(operations, rename.Operation{
-			From: file.Path, To: file.Path,
-			Transform: func(input, output string) error {
+		operation := rename.Operation{From: file.Path, To: file.Path}
+		if !metadata.WritesInPlace(file.Path) {
+			operation.Transform = func(input, output string) error {
 				return application.metadataWriter.Write(input, output, values)
-			},
-		})
+			}
+		}
+		operations = append(operations, operation)
 	}
 	return operations
 }
@@ -1335,7 +1382,7 @@ func (application *Application) writeMetadata() {
 		remux := make([]rename.Operation, 0, len(operations))
 		written := make(map[string]bool, len(operations))
 		for _, operation := range operations {
-			if strings.EqualFold(filepath.Ext(operation.From), ".mkv") {
+			if metadata.WritesInPlace(operation.From) {
 				if err := application.metadataWriter.WriteMKVInPlace(
 					operation.From, valuesByPath[pathKey(operation.From)],
 				); err != nil {

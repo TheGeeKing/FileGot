@@ -776,12 +776,59 @@ func TestSameNameFileCanWritePendingMetadata(t *testing.T) {
 	if len(operations) != 1 || operations[0].From != operations[0].To {
 		t.Fatalf("metadata operations = %#v", operations)
 	}
+	if operations[0].Transform != nil {
+		t.Fatal("MKV metadata-only must not use a remux Transform")
+	}
 	if rowStatus(application.files[0]) != media.Metadata {
 		t.Fatalf("row status = %q", rowStatus(application.files[0]))
 	}
 	application.files[0].MetadataPending = false
 	if rowStatus(application.files[0]) != media.SameName {
 		t.Fatalf("written same-name row status = %q", rowStatus(application.files[0]))
+	}
+}
+
+func TestRenameOperationsSkipMKVTransform(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	options.WriteEmbeddedMetadata = true
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{
+		Path: `C:\media\Show.S01E01.mkv`, Proposed: "Show - S01E01 - Pilot.mkv", Status: media.Ready,
+		Candidate: media.Candidate{ID: 1, Kind: media.Episode, Title: "Show", EpisodeTitle: "Pilot", Season: 1, Episode: 1},
+	}, {
+		Path: `C:\media\Movie.2024.mp4`, Proposed: "Movie (2024).mp4", Status: media.Ready,
+		Candidate: media.Candidate{ID: 2, Kind: media.Movie, Title: "Movie", ReleaseDate: "2024-01-01"},
+	}}
+	application.selectedRows = map[int]bool{0: true, 1: true}
+	operations := application.renameOperations()
+	if len(operations) != 2 {
+		t.Fatalf("operations = %#v", operations)
+	}
+	var mkv, mp4 *rename.Operation
+	for index := range operations {
+		switch filepath.Ext(operations[index].From) {
+		case ".mkv":
+			mkv = &operations[index]
+		case ".mp4":
+			mp4 = &operations[index]
+		}
+	}
+	if mkv == nil || mkv.Transform != nil {
+		t.Fatalf("MKV rename must not full-copy via Transform: %#v", mkv)
+	}
+	if mp4 == nil || mp4.Transform == nil {
+		t.Fatalf("MP4 rename should still remux via Transform: %#v", mp4)
+	}
+	pending := application.mkvMetadataBeforeRename(operations)
+	if len(pending) != 1 || pending[mkv.From].Title != "Pilot" {
+		t.Fatalf("pending MKV metadata = %#v", pending)
 	}
 }
 

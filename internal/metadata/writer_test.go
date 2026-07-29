@@ -3,6 +3,7 @@ package metadata
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -38,6 +39,17 @@ func TestSupportedContainers(t *testing.T) {
 	}
 	if Supported("movie.avi") {
 		t.Fatal("AVI should remain unchanged")
+	}
+	if !WritesInPlace("movie.mkv") || WritesInPlace("movie.mp4") {
+		t.Fatal("only MKV should write metadata in place")
+	}
+}
+
+func TestWriteRejectsMKVFullCopy(t *testing.T) {
+	writer := NewWriter()
+	err := writer.Write("in.mkv", "out.mkv", Values{Title: "T"})
+	if err == nil || !strings.Contains(err.Error(), "WriteMKVInPlace") {
+		t.Fatalf("Write MKV = %v", err)
 	}
 }
 

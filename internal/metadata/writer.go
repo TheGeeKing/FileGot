@@ -3,8 +3,6 @@ package metadata
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -110,6 +108,12 @@ func Supported(path string) bool {
 	}
 }
 
+// WritesInPlace reports containers tagged without a full-file remux/copy.
+// MKV uses mkvpropedit; do not stage a second media copy for rename or undo.
+func WritesInPlace(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".mkv")
+}
+
 func (writer *Writer) Differs(path string, values Values) (bool, error) {
 	if strings.EqualFold(filepath.Ext(path), ".mkv") {
 		return writer.mkvDiffers(path, values)
@@ -139,15 +143,8 @@ func (writer *Writer) Differs(path string, values Values) (bool, error) {
 }
 
 func (writer *Writer) Write(input, output string, values Values) error {
-	if strings.EqualFold(filepath.Ext(input), ".mkv") {
-		if err := copyFile(input, output); err != nil {
-			return err
-		}
-		if err := writer.WriteMKVInPlace(output, values); err != nil {
-			_ = os.Remove(output)
-			return err
-		}
-		return nil
+	if WritesInPlace(input) {
+		return fmt.Errorf("MKV metadata must use WriteMKVInPlace; full-file copy is not supported")
 	}
 	args := []string{"-v", "error", "-y", "-i", input, "-map", "0", "-c", "copy", "-map_metadata", "0"}
 	args = append(args, "-movflags", "use_metadata_tags")
@@ -161,24 +158,6 @@ func (writer *Writer) Write(input, output string, values Values) error {
 		return fmt.Errorf("ffmpeg: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
-}
-
-func copyFile(input, output string) error {
-	source, err := os.Open(input)
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-	destination, err := os.Create(output)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(destination, source)
-	closeErr := destination.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	return closeErr
 }
 
 func tags(values Values) []struct{ key, value string } {
