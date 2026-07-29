@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -63,6 +62,26 @@ func TestMergeMatroskaTagsUsesSpecTargetsAndPreservesExistingTags(t *testing.T) 
 	}
 }
 
+func TestMergeMatroskaTagsStripsTrackUIDTags(t *testing.T) {
+	tags := matroskaTags{Tags: []matroskaTag{{
+		Targets: matroskaTargets{TrackUID: 99},
+		Simple:  []matroskaSimple{{Name: "BPS", String: "1000"}, {Name: "_STATISTICS_TAGS", String: "BPS"}},
+	}, {
+		Targets: matroskaTargets{TypeValue: 30},
+		Simple:  []matroskaSimple{{Name: "COMMENT", String: "keep"}},
+	}}}
+	mergeMatroskaTags(&tags, Values{Title: "Pilot", Genre: "Drama", IsEpisode: true, Series: "Show", Season: 1, Episode: 1})
+	for _, tag := range tags.Tags {
+		if tag.Targets.TrackUID != 0 {
+			t.Fatalf("TrackUID tag kept: %#v", tag)
+		}
+	}
+	got := matroskaTagMap(tags)
+	if got["30:COMMENT"] != "keep" || got["50:GENRE"] != "Drama" {
+		t.Fatalf("tags = %#v", got)
+	}
+}
+
 func TestMergeMatroskaTagsMovieUsesLevel50Only(t *testing.T) {
 	tags := matroskaTags{}
 	mergeMatroskaTags(&tags, Values{
@@ -111,6 +130,22 @@ func TestWriteMKVInPlaceIntegration(t *testing.T) {
 	).CombinedOutput(); err != nil {
 		t.Fatalf("create MKV: %v: %s", err, output)
 	}
+	// Seed TrackUID statistics like mkvmerge leaves behind; Windows Explorer ignores
+	// GENRE/COMMENT/DATE_RELEASED while these remain, so WriteMKVInPlace must strip them.
+	seedTags := filepath.Join(t.TempDir(), "seed-tags.xml")
+	if err := os.WriteFile(seedTags, []byte(`<?xml version="1.0"?>
+<Tags>
+  <Tag>
+    <Targets><TrackUID>1</TrackUID></Targets>
+    <Simple><Name>BPS</Name><String>1000</String></Simple>
+  </Tag>
+</Tags>
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("mkvpropedit", path, "--tags", "all:"+seedTags).CombinedOutput(); err != nil {
+		t.Fatalf("seed track tags: %v: %s", err, output)
+	}
 	values := Values{
 		Title: "Pilot", OriginalTitle: "Original Pilot", Date: "2024-01-02",
 		Series: "Show", Season: 1, Episode: 2, TMDBID: 42, Overview: "Story",
@@ -149,7 +184,7 @@ func TestWriteMKVInPlaceIntegration(t *testing.T) {
 	foundEpisodeTarget := false
 	for _, tag := range tags.Tags {
 		if tag.Targets.TrackUID != 0 {
-			continue
+			t.Fatalf("TrackUID tag should be stripped for Windows Explorer: %#v", tag.Targets)
 		}
 		if targetValue(tag.Targets) == 50 {
 			foundEpisodeTarget = true
@@ -158,11 +193,6 @@ func TestWriteMKVInPlaceIntegration(t *testing.T) {
 			}
 		}
 		for _, simple := range tag.Simple {
-			if strings.HasPrefix(simple.Name, "_STATISTICS_") || simple.Name == "BPS" ||
-				simple.Name == "DURATION" || simple.Name == "NUMBER_OF_FRAMES" ||
-				simple.Name == "NUMBER_OF_BYTES" {
-				continue
-			}
 			if simple.LanguageIETF != "und" {
 				t.Errorf("%s language = %q, want und", simple.Name, simple.LanguageIETF)
 			}
