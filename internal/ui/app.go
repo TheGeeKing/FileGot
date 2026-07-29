@@ -1198,14 +1198,14 @@ func (application *Application) applyRename() {
 		application.refresh()
 		return
 	}
-	mkvMetadata := application.mkvMetadataBeforeRename(operations)
+	pendingMetadata := application.metadataBeforeRename(operations)
 	application.busy = true
 	application.setStatus("Renaming files…")
 	application.updateButtons()
 	go func() {
 		var writeErrors []error
-		for path, values := range mkvMetadata {
-			if err := application.metadataWriter.WriteMKVInPlace(path, values); err != nil {
+		for path, values := range pendingMetadata {
+			if err := application.metadataWriter.WriteInPlace(path, values); err != nil {
 				writeErrors = append(writeErrors, fmt.Errorf("%s: %w", path, err))
 			}
 		}
@@ -1229,12 +1229,12 @@ func (application *Application) applyRename() {
 				if len(writeErrors) > 0 {
 					dialog.ShowError(errors.Join(writeErrors...), application.window)
 					status = fmt.Sprintf(
-						"Renamed %d file(s); MKV metadata writing had errors. Undo Last restores names only.",
+						"Renamed %d file(s); metadata writing had errors. Undo Last restores names only.",
 						len(operations),
 					)
-				} else if len(mkvMetadata) > 0 {
+				} else if len(pendingMetadata) > 0 {
 					status = fmt.Sprintf(
-						"Renamed %d file(s) and wrote MKV metadata. Undo Last restores names only.",
+						"Renamed %d file(s) and wrote metadata. Undo Last restores names only.",
 						len(operations),
 					)
 				}
@@ -1247,10 +1247,6 @@ func (application *Application) applyRename() {
 
 func (application *Application) renameOperations() []rename.Operation {
 	operations := make([]rename.Operation, 0, len(application.files))
-	options := settings.Defaults()
-	if application.settings != nil {
-		options = application.settings.Load()
-	}
 	for index, file := range application.files {
 		if len(application.selectedRows) > 0 && !application.selectedRows[index] {
 			continue
@@ -1258,20 +1254,12 @@ func (application *Application) renameOperations() []rename.Operation {
 		if file.Path == "" || file.Status != media.Ready || unchanged(file) {
 			continue
 		}
-		operation := rename.Operation{From: file.Path, To: matcher.Destination(file)}
-		// MKV is tagged in place before rename (no full-file copy). Remux containers still use Transform.
-		if options.WriteEmbeddedMetadata && metadata.Supported(file.Path) && !metadata.WritesInPlace(file.Path) {
-			values := embeddedMetadata(file, application.embeddedMetadataFields())
-			operation.Transform = func(input, output string) error {
-				return application.metadataWriter.Write(input, output, values)
-			}
-		}
-		operations = append(operations, operation)
+		operations = append(operations, rename.Operation{From: file.Path, To: matcher.Destination(file)})
 	}
 	return operations
 }
 
-func (application *Application) mkvMetadataBeforeRename(operations []rename.Operation) map[string]metadata.Values {
+func (application *Application) metadataBeforeRename(operations []rename.Operation) map[string]metadata.Values {
 	options := settings.Defaults()
 	if application.settings != nil {
 		options = application.settings.Load()
@@ -1282,7 +1270,7 @@ func (application *Application) mkvMetadataBeforeRename(operations []rename.Oper
 	fields := application.embeddedMetadataFields()
 	pending := make(map[string]metadata.Values)
 	for _, operation := range operations {
-		if !metadata.WritesInPlace(operation.From) {
+		if !metadata.Supported(operation.From) {
 			continue
 		}
 		for _, file := range application.files {
@@ -1338,8 +1326,8 @@ func (application *Application) markMetadataPending(files []media.File) {
 	}
 }
 
-func (application *Application) metadataOperations() []rename.Operation {
-	operations := make([]rename.Operation, 0, len(application.files))
+func (application *Application) metadataFiles() []media.File {
+	var files []media.File
 	for index, file := range application.files {
 		if len(application.selectedRows) > 0 && !application.selectedRows[index] {
 			continue
@@ -1347,60 +1335,29 @@ func (application *Application) metadataOperations() []rename.Operation {
 		if file.Path == "" || file.Status != media.Ready || file.Candidate.ID == 0 || !metadata.Supported(file.Path) {
 			continue
 		}
-		values := embeddedMetadata(file, application.embeddedMetadataFields())
-		operation := rename.Operation{From: file.Path, To: file.Path}
-		if !metadata.WritesInPlace(file.Path) {
-			operation.Transform = func(input, output string) error {
-				return application.metadataWriter.Write(input, output, values)
-			}
-		}
-		operations = append(operations, operation)
+		files = append(files, file)
 	}
-	return operations
+	return files
 }
 
 func (application *Application) writeMetadata() {
-	operations := application.metadataOperations()
-	if application.busy || len(operations) == 0 {
+	files := application.metadataFiles()
+	if application.busy || len(files) == 0 {
 		return
 	}
-	valuesByPath := make(map[string]metadata.Values, len(operations))
 	fields := application.embeddedMetadataFields()
-	for _, operation := range operations {
-		for _, file := range application.files {
-			if pathKey(file.Path) == pathKey(operation.From) {
-				valuesByPath[pathKey(operation.From)] = embeddedMetadata(file, fields)
-				break
-			}
-		}
-	}
 	application.busy = true
 	application.setStatus("Writing embedded metadata…")
 	application.updateButtons()
 	go func() {
 		var writeErrors []error
-		remux := make([]rename.Operation, 0, len(operations))
-		written := make(map[string]bool, len(operations))
-		for _, operation := range operations {
-			if metadata.WritesInPlace(operation.From) {
-				if err := application.metadataWriter.WriteMKVInPlace(
-					operation.From, valuesByPath[pathKey(operation.From)],
-				); err != nil {
-					writeErrors = append(writeErrors, fmt.Errorf("%s: %w", operation.From, err))
-				} else {
-					written[pathKey(operation.From)] = true
-				}
+		written := make(map[string]bool, len(files))
+		for _, file := range files {
+			values := embeddedMetadata(file, fields)
+			if err := application.metadataWriter.WriteInPlace(file.Path, values); err != nil {
+				writeErrors = append(writeErrors, fmt.Errorf("%s: %w", file.Path, err))
 			} else {
-				remux = append(remux, operation)
-			}
-		}
-		if len(remux) > 0 {
-			if err := application.renamer.Apply(remux); err != nil {
-				writeErrors = append(writeErrors, err)
-			} else {
-				for _, operation := range remux {
-					written[pathKey(operation.From)] = true
-				}
+				written[pathKey(file.Path)] = true
 			}
 		}
 		err := errors.Join(writeErrors...)
@@ -1559,7 +1516,7 @@ func (application *Application) updateButtons() {
 	setEnabled(application.reviewButton, application.canReview())
 	setEnabled(application.mediaDetailsButton, application.canShowMediaDetails())
 	setEnabled(application.renameButton, application.canRename())
-	setEnabled(application.metadataButton, !application.busy && len(application.metadataOperations()) > 0)
+	setEnabled(application.metadataButton, !application.busy && len(application.metadataFiles()) > 0)
 	setEnabled(application.undoButton, !application.busy && application.renamer.HasUndo())
 
 	if application.busy && application.cancel != nil {
@@ -1664,7 +1621,7 @@ func (application *Application) contextActions() (*fyne.MenuItem, *fyne.MenuItem
 	renameItem := fyne.NewMenuItem("Rename", application.confirmRename)
 	renameItem.Disabled = !application.canRename()
 	metadataItem := fyne.NewMenuItem("Write Metadata", application.writeMetadata)
-	metadataItem.Disabled = application.busy || len(application.metadataOperations()) == 0
+	metadataItem.Disabled = application.busy || len(application.metadataFiles()) == 0
 	reviewItem := fyne.NewMenuItem("Review", application.reviewSelected)
 	reviewItem.Disabled = !application.canReview()
 	removeItem := fyne.NewMenuItem("Remove", application.removeSelected)

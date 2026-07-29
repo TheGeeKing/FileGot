@@ -772,12 +772,9 @@ func TestSameNameFileCanWritePendingMetadata(t *testing.T) {
 		}},
 		selectedRows: map[int]bool{0: true},
 	}
-	operations := application.metadataOperations()
-	if len(operations) != 1 || operations[0].From != operations[0].To {
-		t.Fatalf("metadata operations = %#v", operations)
-	}
-	if operations[0].Transform != nil {
-		t.Fatal("MKV metadata-only must not use a remux Transform")
+	files := application.metadataFiles()
+	if len(files) != 1 || files[0].Path != "same.mkv" {
+		t.Fatalf("metadata files = %#v", files)
 	}
 	if rowStatus(application.files[0]) != media.Metadata {
 		t.Fatalf("row status = %q", rowStatus(application.files[0]))
@@ -788,7 +785,7 @@ func TestSameNameFileCanWritePendingMetadata(t *testing.T) {
 	}
 }
 
-func TestRenameOperationsSkipMKVTransform(t *testing.T) {
+func TestRenameOperationsNeverUseTransform(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
@@ -811,24 +808,14 @@ func TestRenameOperationsSkipMKVTransform(t *testing.T) {
 	if len(operations) != 2 {
 		t.Fatalf("operations = %#v", operations)
 	}
-	var mkv, mp4 *rename.Operation
-	for index := range operations {
-		switch filepath.Ext(operations[index].From) {
-		case ".mkv":
-			mkv = &operations[index]
-		case ".mp4":
-			mp4 = &operations[index]
+	for _, op := range operations {
+		if op.Transform != nil {
+			t.Fatalf("rename must never use Transform (no full-copy): %s", op.From)
 		}
 	}
-	if mkv == nil || mkv.Transform != nil {
-		t.Fatalf("MKV rename must not full-copy via Transform: %#v", mkv)
-	}
-	if mp4 == nil || mp4.Transform == nil {
-		t.Fatalf("MP4 rename should still remux via Transform: %#v", mp4)
-	}
-	pending := application.mkvMetadataBeforeRename(operations)
-	if len(pending) != 1 || pending[mkv.From].Title != "Pilot" {
-		t.Fatalf("pending MKV metadata = %#v", pending)
+	pending := application.metadataBeforeRename(operations)
+	if len(pending) != 2 {
+		t.Fatalf("pending metadata should cover both MKV and MP4: %#v", pending)
 	}
 }
 

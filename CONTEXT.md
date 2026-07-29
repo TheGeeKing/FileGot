@@ -21,5 +21,5 @@ A FileBot-compatible map of MediaInfo fields for a general, video, audio, text, 
 _Avoid_: Probe output
 
 **Embedded metadata**:
-Descriptive title-provider fields written into a media container when the user opts in, distinct from technical stream properties read for naming. MKV writes are in place (no full-file copy); undoing those tag changes is tracked in #25. Remux containers (MP4/MOV) still rewrite via ffmpeg when metadata is enabled.
+Descriptive title-provider fields written into a media container when the user opts in, distinct from technical stream properties read for naming. All containers write metadata in place (no leftover backup files). MKV uses mkvpropedit; MP4/MOV use ffmpeg stream-copy to a temp that atomically replaces the original. Undoing tag changes is tracked in #25.
 _Avoid_: Tags, MediaInfo fields, technical metadata

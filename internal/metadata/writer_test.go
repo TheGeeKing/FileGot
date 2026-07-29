@@ -3,18 +3,21 @@ package metadata
 import (
 	"os"
 	"slices"
-	"strings"
 	"testing"
 )
 
-func TestWriterUsesStreamCopyAndMetadata(t *testing.T) {
+func TestWriteInPlaceMP4UsesFFmpegAndReplacesOriginal(t *testing.T) {
+	dir := t.TempDir()
+	source := dir + "/movie.mp4"
+	if err := os.WriteFile(source, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var got []string
 	writer := &Writer{run: func(_ string, args ...string) ([]byte, error) {
 		got = append([]string(nil), args...)
 		return nil, os.WriteFile(args[len(args)-1], []byte("tagged"), 0o600)
 	}}
-	output := t.TempDir() + "/tagged.mp4"
-	err := writer.Write("episode.mp4", output, Values{
+	err := writer.WriteInPlace(source, Values{
 		Title: "Pilot", OriginalTitle: "Original Pilot", Date: "2024-01-02",
 		Series: "Show", Season: 1, Episode: 2, TMDBID: 42, Overview: "Story",
 	})
@@ -29,6 +32,14 @@ func TestWriterUsesStreamCopyAndMetadata(t *testing.T) {
 			t.Errorf("ffmpeg args missing %q: %v", want, got)
 		}
 	}
+	content, _ := os.ReadFile(source)
+	if string(content) != "tagged" {
+		t.Fatalf("original not replaced: %q", content)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("leftover files: %v", entries)
+	}
 }
 
 func TestSupportedContainers(t *testing.T) {
@@ -39,17 +50,6 @@ func TestSupportedContainers(t *testing.T) {
 	}
 	if Supported("movie.avi") {
 		t.Fatal("AVI should remain unchanged")
-	}
-	if !WritesInPlace("movie.mkv") || WritesInPlace("movie.mp4") {
-		t.Fatal("only MKV should write metadata in place")
-	}
-}
-
-func TestWriteRejectsMKVFullCopy(t *testing.T) {
-	writer := NewWriter()
-	err := writer.Write("in.mkv", "out.mkv", Values{Title: "T"})
-	if err == nil || !strings.Contains(err.Error(), "WriteMKVInPlace") {
-		t.Fatalf("Write MKV = %v", err)
 	}
 }
 

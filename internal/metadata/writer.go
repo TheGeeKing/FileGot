@@ -3,6 +3,7 @@ package metadata
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -108,11 +109,6 @@ func Supported(path string) bool {
 	}
 }
 
-// WritesInPlace reports containers tagged without a full-file remux/copy.
-// MKV uses mkvpropedit; do not stage a second media copy for rename or undo.
-func WritesInPlace(path string) bool {
-	return strings.EqualFold(filepath.Ext(path), ".mkv")
-}
 
 func (writer *Writer) Differs(path string, values Values) (bool, error) {
 	if strings.EqualFold(filepath.Ext(path), ".mkv") {
@@ -142,20 +138,33 @@ func (writer *Writer) Differs(path string, values Values) (bool, error) {
 	return false, nil
 }
 
-func (writer *Writer) Write(input, output string, values Values) error {
-	if WritesInPlace(input) {
-		return fmt.Errorf("MKV metadata must use WriteMKVInPlace; full-file copy is not supported")
+// WriteInPlace writes metadata into the container at path without creating a
+// second copy. MKV uses mkvpropedit; MP4/MOV/M4V use ffmpeg stream-copy to a
+// temp file that replaces the original atomically.
+func (writer *Writer) WriteInPlace(path string, values Values) error {
+	if strings.EqualFold(filepath.Ext(path), ".mkv") {
+		return writer.WriteMKVInPlace(path, values)
 	}
-	args := []string{"-v", "error", "-y", "-i", input, "-map", "0", "-c", "copy", "-map_metadata", "0"}
+	return writer.writeMP4InPlace(path, values)
+}
+
+func (writer *Writer) writeMP4InPlace(path string, values Values) error {
+	tmp := path + ".filegot-tmp" + filepath.Ext(path)
+	args := []string{"-v", "error", "-y", "-i", path, "-map", "0", "-c", "copy", "-map_metadata", "0"}
 	args = append(args, "-movflags", "use_metadata_tags")
 	for _, tag := range tags(values) {
 		if tag.value != "" {
 			args = append(args, "-metadata", tag.key+"="+tag.value)
 		}
 	}
-	args = append(args, output)
+	args = append(args, tmp)
 	if output, err := writer.run("ffmpeg", args...); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("ffmpeg: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("replace original: %w", err)
 	}
 	return nil
 }
