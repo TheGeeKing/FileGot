@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest a new capability or improvement for FileGot.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem you want solved. Feature ideas go through triage before implementation.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that FileGot does not support well today?
+      placeholder: I want to organize episodes into season folders without renaming the files themselves.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would a good outcome look like from a user perspective?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you tried or would accept.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of FileGot would this mainly touch?
+      options:
+        - Matching / TMDB
+        - Naming templates
+        - Rename / undo
+        - Settings
+        - UI
+        - MediaInfo / technical bindings
+        - Other / unsure
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Examples, screenshots, or links to related issues.
+    validations:
+      required: false

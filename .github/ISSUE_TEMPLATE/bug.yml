@@ -1,0 +1,92 @@
+name: Bug report
+description: Something in FileGot is broken or behaves unexpectedly.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not paste TMDB tokens, `.env` contents, or other secrets.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing the problem.
+      placeholder: Matching fails for episode filenames that include a language tag.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps someone else can follow.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected FileGot to do.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead, including any status message or error text.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of FileGot is involved?
+      options:
+        - Matching / TMDB
+        - Naming templates
+        - Rename / undo
+        - Settings
+        - UI
+        - MediaInfo / technical bindings
+        - Other / unsure
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - Linux
+        - macOS
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: FileGot version
+      description: Commit hash, tag, or how you built/ran it (for example `go run ./cmd/filegot`).
+      placeholder: main @ abc1234
+    validations:
+      required: true
+  - type: textarea
+    id: samples
+    attributes:
+      label: Sample filenames or paths
+      description: Redact personal folder names if needed. Do not include API tokens.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Screenshots, logs, or anything else that helps.
+    validations:
+      required: false
