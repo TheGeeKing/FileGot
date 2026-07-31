@@ -4,3 +4,6 @@ Name = "FileGot"
 ID = "com.github.thegeeking.filegot"
 Version = "0.1.0"
 Build = 1
+
+[Migrations]
+  fyneDo = true

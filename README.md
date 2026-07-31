@@ -14,10 +14,12 @@ available for undo.
 ## Develop
 
 Ensure `C:\msys64\ucrt64\bin` appears before older MinGW installations in
-`PATH`, then run:
+`PATH`, then run from the app package directory so Fyne loads
+`FyneApp.toml` (including the `fyneDo` migration):
 
 ```powershell
-go run ./cmd/filegot
+cd cmd\filegot
+go run .
 ```
 
 Open **Settings** and enter a TMDB Read Access Token. **Test Connection**
