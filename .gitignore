@@ -1,5 +1,8 @@
 FileGot.exe
 FileGot.exe~
+FileGot.app/
+*.tar.gz
+cmd/filegot/fyne_metadata_init.go
 *.test
 *.out
 .worktrees/

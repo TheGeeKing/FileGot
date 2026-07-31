@@ -35,11 +35,13 @@ func ShowAbout(a fyne.App, parent fyne.Window) {
 
 func aboutTitle(a fyne.App) string {
 	meta := a.Metadata()
-	name := meta.Name
+	return formatAboutTitle(meta.Name, meta.Version)
+}
+
+func formatAboutTitle(name, version string) string {
 	if name == "" {
 		name = "FileGot"
 	}
-	version := meta.Version
 	if version == "" {
 		version = "dev"
 	}

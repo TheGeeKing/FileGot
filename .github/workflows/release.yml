@@ -1,0 +1,216 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Linux GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-amd64
+          - os: macos-latest
+            platform: darwin-arm64
+          - os: ubuntu-latest
+            platform: linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Linux GUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev zip
+
+      - name: Install Windows C toolchain
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc zip
+          path-type: inherit
+
+      - name: Install fyne CLI
+        shell: bash
+        run: |
+          go install fyne.io/tools/cmd/fyne@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Derive version from tag
+        id: meta
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "Tag must be vX, vX.Y, or vX.Y.Z (got ${tag})" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Package
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          fyne package \
+            --release \
+            --source-dir ./cmd/filegot \
+            --app-version "${{ steps.meta.outputs.version }}" \
+            --app-build "${{ steps.meta.outputs.build }}"
+
+      - name: Zip artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.meta.outputs.version }}"
+          platform="${{ matrix.platform }}"
+          out="FileGot-${version}-${platform}.zip"
+          dest="${GITHUB_WORKSPACE}/dist/${out}"
+          mkdir -p dist
+
+          case "${{ runner.os }}" in
+            Windows)
+              if [[ -f cmd/filegot/FileGot.exe ]]; then
+                asset="cmd/filegot/FileGot.exe"
+              elif [[ -f FileGot.exe ]]; then
+                asset="FileGot.exe"
+              else
+                echo "Windows package output not found" >&2
+                ls -la . cmd/filegot >&2 || true
+                exit 1
+              fi
+              (
+                cd "$(dirname "${asset}")"
+                zip -9 -r "${dest}" "$(basename "${asset}")"
+              )
+              ;;
+            macOS)
+              if [[ -d FileGot.app ]]; then
+                asset="FileGot.app"
+              elif [[ -d cmd/filegot/FileGot.app ]]; then
+                asset="cmd/filegot/FileGot.app"
+              else
+                echo "macOS package output not found" >&2
+                ls -la . cmd/filegot >&2 || true
+                exit 1
+              fi
+              (
+                cd "$(dirname "${asset}")"
+                zip -9 -ry "${dest}" "$(basename "${asset}")"
+              )
+              ;;
+            Linux)
+              if [[ -f FileGot.tar.gz ]]; then
+                asset="FileGot.tar.gz"
+              elif [[ -f cmd/filegot/FileGot.tar.gz ]]; then
+                asset="cmd/filegot/FileGot.tar.gz"
+              else
+                echo "Linux package output not found" >&2
+                ls -la . cmd/filegot >&2 || true
+                exit 1
+              fi
+              staging="$(mktemp -d)"
+              tar -xzf "${asset}" -C "${staging}"
+              (
+                cd "${staging}"
+                zip -9 -r "${dest}" .
+              )
+              rm -rf "${staging}"
+              ;;
+            *)
+              echo "Unsupported runner OS: ${{ runner.os }}" >&2
+              exit 1
+              ;;
+          esac
+
+          ls -la dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FileGot-${{ matrix.platform }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: meta
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "Tag must be vX, vX.Y, or vX.Y.Z (got ${tag})" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: FileGot-*
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mapfile -t files < <(find artifacts -type f -name '*.zip' | sort)
+          if (( ${#files[@]} == 0 )); then
+            echo "No zip artifacts found" >&2
+            find artifacts -print >&2 || true
+            exit 1
+          fi
+          gh release create "${{ steps.meta.outputs.tag }}" "${files[@]}" \
+            --title "${{ steps.meta.outputs.tag }}" \
+            --generate-notes
