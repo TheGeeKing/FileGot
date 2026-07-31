@@ -59,7 +59,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev zip
+            libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev zip xz-utils
 
       - name: Install Windows C toolchain
         if: runner.os == 'Windows'
@@ -67,7 +67,7 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: mingw-w64-ucrt-x86_64-gcc zip
+          install: mingw-w64-ucrt-x86_64-gcc
           path-type: inherit
 
       - name: Install fyne CLI
@@ -122,10 +122,11 @@ jobs:
                 ls -la . cmd/filegot >&2 || true
                 exit 1
               fi
-              (
-                cd "$(dirname "${asset}")"
-                zip -9 -r "${dest}" "$(basename "${asset}")"
-              )
+              # Git Bash has no zip; MSYS2's zip is not on this PATH. Use PowerShell.
+              asset_win="$(cygpath -w "${asset}")"
+              dest_win="$(cygpath -w "${dest}")"
+              powershell.exe -NoProfile -Command \
+                "Compress-Archive -LiteralPath '${asset_win}' -DestinationPath '${dest_win}' -Force"
               ;;
             macOS)
               if [[ -d FileGot.app ]]; then
@@ -143,8 +144,12 @@ jobs:
               )
               ;;
             Linux)
-              if [[ -f FileGot.tar.gz ]]; then
+              if [[ -f FileGot.tar.xz ]]; then
+                asset="FileGot.tar.xz"
+              elif [[ -f FileGot.tar.gz ]]; then
                 asset="FileGot.tar.gz"
+              elif [[ -f cmd/filegot/FileGot.tar.xz ]]; then
+                asset="cmd/filegot/FileGot.tar.xz"
               elif [[ -f cmd/filegot/FileGot.tar.gz ]]; then
                 asset="cmd/filegot/FileGot.tar.gz"
               else
@@ -153,7 +158,8 @@ jobs:
                 exit 1
               fi
               staging="$(mktemp -d)"
-              tar -xzf "${asset}" -C "${staging}"
+              # fyne package currently emits .tar.xz; older tooling used .tar.gz
+              tar -xf "${asset}" -C "${staging}"
               (
                 cd "${staging}"
                 zip -9 -r "${dest}" .

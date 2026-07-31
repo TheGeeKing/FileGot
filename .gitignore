@@ -2,6 +2,7 @@ FileGot.exe
 FileGot.exe~
 FileGot.app/
 *.tar.gz
+*.tar.xz
 cmd/filegot/fyne_metadata_init.go
 *.test
 *.out
