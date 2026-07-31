@@ -206,7 +206,7 @@ func (application *Application) build() {
 			fyne.NewMenuItemWithIcon("Settings", theme.SettingsIcon(), showSettings),
 		),
 		fyne.NewMenu("Help", fyne.NewMenuItemWithIcon("About", theme.InfoIcon(), func() {
-			ShowAbout(application.window)
+			ShowAbout(application.app, application.window)
 		})),
 	))
 

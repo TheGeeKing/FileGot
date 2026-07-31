@@ -11,7 +11,7 @@ available for undo.
 - A 64-bit C compiler for Fyne. On Windows, use the MSYS2 UCRT64 toolchain.
 - A TMDB API Read Access Token
 
-## Run
+## Develop
 
 Ensure `C:\msys64\ucrt64\bin` appears before older MinGW installations in
 `PATH`, then run:
@@ -20,16 +20,23 @@ Ensure `C:\msys64\ucrt64\bin` appears before older MinGW installations in
 go run ./cmd/filegot
 ```
 
+Use this for day-to-day work. It is fast; About shows `FileGot dev` because
+Fyne app metadata is only baked in by packaging.
+
 Open **Settings** and enter a TMDB Read Access Token. **Test Connection**
 validates it and loads TMDB's supported metadata languages.
 
 ## Build
 
-Create a Windows GUI executable without an additional console window:
+Create a distributable Windows GUI executable with Fyne release metadata
+(name, version, icon) and no console window:
 
 ```powershell
 .\build-windows.ps1
 ```
+
+This runs `fyne package --release` for `./cmd/filegot` and writes `FileGot.exe`
+at the repo root. Use it for release artifacts, not the inner dev loop.
 
 ## Verify
 

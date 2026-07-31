@@ -1,5 +1,5 @@
-/FileGot.exe
-/FileGot.exe~
+FileGot.exe
+FileGot.exe~
 *.test
 *.out
 .worktrees/
