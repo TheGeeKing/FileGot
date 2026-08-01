@@ -17,7 +17,8 @@ env:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    # Linux only — served by gharp. Release path only (not fork PRs).
+    runs-on: [self-hosted, linux-amd64]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -43,16 +44,18 @@ jobs:
   build:
     name: Build ${{ matrix.platform }}
     needs: test
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runs_on }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          # Cross-OS packages stay on GitHub-hosted runners.
+          - runs_on: windows-latest
             platform: windows-amd64
-          - os: macos-latest
+          - runs_on: macos-latest
             platform: darwin-arm64
-          - os: ubuntu-latest
+          # Linux package via gharp ephemeral runner.
+          - runs_on: [self-hosted, linux-amd64]
             platform: linux-amd64
     steps:
       - uses: actions/checkout@v7
@@ -193,6 +196,7 @@ jobs:
   release:
     name: GitHub Release
     needs: build
+    # Hosted: needs `gh`; cheap job; keeps write token off the self-hosted box.
     runs-on: ubuntu-latest
     permissions:
       contents: write
