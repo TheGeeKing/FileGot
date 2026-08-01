@@ -6,4 +6,4 @@ Version = ""
 Build = 1
 
 [Migrations]
-  fyneDo = true
+fyneDo = true
