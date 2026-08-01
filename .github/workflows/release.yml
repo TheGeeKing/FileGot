@@ -1,12 +1,18 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag (for example v0.1.2)
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
 
 jobs:
   test:
@@ -14,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-go@v7
         with:
@@ -48,6 +56,8 @@ jobs:
             platform: linux-amd64
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-go@v7
         with:
@@ -80,7 +90,7 @@ jobs:
         id: meta
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
           version="${tag#v}"
           if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
             echo "Tag must be vX, vX.Y, or vX.Y.Z (got ${tag})" >&2
@@ -188,11 +198,13 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Derive version from tag
         id: meta
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
           version="${tag#v}"
           if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
             echo "Tag must be vX, vX.Y, or vX.Y.Z (got ${tag})" >&2
@@ -207,16 +219,16 @@ jobs:
           pattern: FileGot-*
           merge-multiple: true
 
-      - name: Create release
+      - name: Attach artifacts to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          tag="${{ steps.meta.outputs.tag }}"
           mapfile -t files < <(find artifacts -type f -name '*.zip' | sort)
           if (( ${#files[@]} == 0 )); then
             echo "No zip artifacts found" >&2
             find artifacts -print >&2 || true
             exit 1
           fi
-          gh release create "${{ steps.meta.outputs.tag }}" "${files[@]}" \
-            --title "${{ steps.meta.outputs.tag }}" \
-            --generate-notes
+          # release-please already created the GitHub Release (with notes).
+          gh release upload "${tag}" "${files[@]}" --clobber
