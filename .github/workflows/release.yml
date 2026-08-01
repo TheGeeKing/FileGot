@@ -18,7 +18,11 @@ jobs:
   test:
     name: Test
     # Linux only — served by gharp. Release path only (not fork PRs).
-    runs-on: [self-hosted, linux-amd64]
+    # gharp-* dynamic label binds this job to the runner gharp just spawned.
+    runs-on:
+      - self-hosted
+      - linux-amd64
+      - gharp-filegot-test-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -55,7 +59,10 @@ jobs:
           - runs_on: macos-latest
             platform: darwin-arm64
           # Linux package via gharp ephemeral runner.
-          - runs_on: [self-hosted, linux-amd64]
+          - runs_on:
+              - self-hosted
+              - linux-amd64
+              - gharp-filegot-linux-${{ github.run_id }}-${{ github.run_attempt }}
             platform: linux-amd64
     steps:
       - uses: actions/checkout@v7
