@@ -130,8 +130,8 @@ func (writer *Writer) Differs(path string, values Values) (bool, error) {
 	for key, value := range probe.Format.Tags {
 		actual[strings.ToLower(key)] = value
 	}
-	for _, tag := range tags(values) {
-		if tag.value != "" && actual[tag.key] != tag.value {
+	for _, entry := range ffmpegMetadataEntries(values) {
+		if entry.value != "" && actual[entry.key] != entry.value {
 			return true, nil
 		}
 	}
@@ -152,9 +152,9 @@ func (writer *Writer) writeMP4InPlace(path string, values Values) error {
 	tmp := path + ".filegot-tmp" + filepath.Ext(path)
 	args := []string{"-v", "error", "-y", "-i", path, "-map", "0", "-c", "copy", "-map_metadata", "0"}
 	args = append(args, "-movflags", "use_metadata_tags")
-	for _, tag := range tags(values) {
-		if tag.value != "" {
-			args = append(args, "-metadata", tag.key+"="+tag.value)
+	for _, entry := range ffmpegMetadataEntries(values) {
+		if entry.value != "" {
+			args = append(args, "-metadata", entry.key+"="+entry.value)
 		}
 	}
 	args = append(args, tmp)
@@ -169,7 +169,7 @@ func (writer *Writer) writeMP4InPlace(path string, values Values) error {
 	return nil
 }
 
-func tags(values Values) []struct{ key, value string } {
+func ffmpegMetadataEntries(values Values) []struct{ key, value string } {
 	return []struct{ key, value string }{
 		{"title", values.Title},
 		{"original_title", values.OriginalTitle},
