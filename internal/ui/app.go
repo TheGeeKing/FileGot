@@ -349,8 +349,10 @@ func (application *Application) fileColumnText(file media.File, column int) stri
 }
 
 const (
-	unsupportedMetadataStatus = "ready (unsupported metadata)"
-	unsupportedMetadataTip    = "Embedded metadata writing is unsupported for this container, but rename still works."
+	unsupportedMetadataStatus  = "ready (unsupported metadata)"
+	unsupportedMetadataTip     = "Embedded metadata writing is unsupported for this container, but rename still works."
+	metadataWriteFailedStatus  = "ready (metadata write failed)"
+	metadataWriteFailedPrefix  = "Embedded metadata could not be written"
 )
 
 func (application *Application) writeEmbeddedMetadataEnabled() bool {
@@ -365,7 +367,14 @@ func (application *Application) unsupportedEmbeddedMetadata(file media.File) boo
 		!metadata.Supported(file.Path)
 }
 
+func isMetadataWriteFailure(file media.File) bool {
+	return file.Status == media.Ready && strings.HasPrefix(file.Message, metadataWriteFailedPrefix)
+}
+
 func (application *Application) statusText(file media.File) string {
+	if isMetadataWriteFailure(file) {
+		return metadataWriteFailedStatus
+	}
 	if application.unsupportedEmbeddedMetadata(file) {
 		return unsupportedMetadataStatus
 	}
@@ -373,6 +382,9 @@ func (application *Application) statusText(file media.File) string {
 }
 
 func (application *Application) statusTip(file media.File) string {
+	if isMetadataWriteFailure(file) {
+		return file.Message
+	}
 	if application.unsupportedEmbeddedMetadata(file) {
 		return unsupportedMetadataTip
 	}
@@ -1235,9 +1247,11 @@ func (application *Application) applyRename() {
 	application.setStatus("Renaming files…")
 	application.updateButtons()
 	go func() {
+		metadataFailures := make(map[string]error)
 		var writeErrors []error
 		for path, values := range pendingMetadata {
 			if err := application.metadataWriter.WriteInPlace(path, values); err != nil {
+				metadataFailures[path] = err
 				writeErrors = append(writeErrors, fmt.Errorf("%s: %w", path, err))
 			}
 		}
@@ -1254,7 +1268,7 @@ func (application *Application) applyRename() {
 				}
 				application.setStatus("Rename failed; FileGot attempted to restore original names.")
 			} else {
-				application.files = remainingAfterRename(application.files, operations)
+				application.files = filesAfterSuccessfulRename(application.files, operations, metadataFailures)
 				application.clearSelection()
 				status := fmt.Sprintf("Renamed %d file(s). Undo Last is available.", len(operations))
 				if len(writeErrors) > 0 {
@@ -1411,15 +1425,35 @@ func (application *Application) writeMetadata() {
 }
 
 func remainingAfterRename(files []media.File, operations []rename.Operation) []media.File {
-	renamed := make(map[string]bool, len(operations))
+	return filesAfterSuccessfulRename(files, operations, nil)
+}
+
+func filesAfterSuccessfulRename(
+	files []media.File,
+	operations []rename.Operation,
+	metadataFailures map[string]error,
+) []media.File {
+	renamedTo := make(map[string]string, len(operations))
 	for _, operation := range operations {
-		renamed[operation.From] = true
+		renamedTo[operation.From] = operation.To
 	}
 	remaining := make([]media.File, 0, len(files))
 	for _, file := range files {
-		if !renamed[file.Path] {
+		destination, renamed := renamedTo[file.Path]
+		if !renamed {
 			remaining = append(remaining, file)
+			continue
 		}
+		failure, failed := metadataFailures[file.Path]
+		if !failed {
+			continue
+		}
+		file.Path = destination
+		file.Proposed = filepath.Base(destination)
+		file.Status = media.Ready
+		file.Message = fmt.Sprintf("%s: %v", metadataWriteFailedPrefix, failure)
+		file.MetadataPending = true
+		remaining = append(remaining, file)
 	}
 	return remaining
 }
@@ -1965,7 +1999,7 @@ func (layout *fileTableLayout) MinSize([]fyne.CanvasObject) fyne.Size {
 }
 
 func fileStatusColumnWidth() float32 {
-	status := widget.NewLabel(unsupportedMetadataStatus)
+	status := widget.NewLabel(metadataWriteFailedStatus)
 	status.SizeName = theme.SizeNameCaptionText
 	header := widget.NewLabelWithStyle("Status", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	header.SizeName = theme.SizeNameCaptionText

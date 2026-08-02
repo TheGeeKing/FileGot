@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image/color"
 	"math"
@@ -134,7 +135,7 @@ func TestMainWindowPresentation(t *testing.T) {
 		}
 	}
 	original, status, proposed := widths["Original File"], widths["Status"], widths["Proposed Name"]
-	statusLabel := widget.NewLabel(unsupportedMetadataStatus)
+	statusLabel := widget.NewLabel(metadataWriteFailedStatus)
 	statusLabel.SizeName = theme.SizeNameCaptionText
 	minStatus := statusLabel.MinSize().Width + theme.Padding()*2
 	if status < minStatus || status > minStatus+40 ||
@@ -821,6 +822,46 @@ func TestRenameOperationsNeverUseTransform(t *testing.T) {
 	pending := application.metadataBeforeRename(operations)
 	if len(pending) != 2 {
 		t.Fatalf("pending metadata should cover both MKV and MP4: %#v", pending)
+	}
+}
+
+func TestFilesAfterSuccessfulRenameKeepMetadataWriteFailures(t *testing.T) {
+	files := []media.File{
+		{Path: "old-a.mkv", Proposed: "new-a.mkv", Status: media.Ready},
+		{Path: "old-b.mkv", Proposed: "new-b.mkv", Status: media.Ready},
+		{Path: "keep.mkv", Proposed: "keep.mkv", Status: media.Review},
+	}
+	operations := []rename.Operation{
+		{From: "old-a.mkv", To: filepath.Join("media", "new-a.mkv")},
+		{From: "old-b.mkv", To: filepath.Join("media", "new-b.mkv")},
+	}
+	failures := map[string]error{"old-a.mkv": errors.New("mkvpropedit failed")}
+
+	remaining := filesAfterSuccessfulRename(files, operations, failures)
+	if len(remaining) != 2 {
+		t.Fatalf("remaining = %#v", remaining)
+	}
+	if remaining[0].Path != operations[0].To || remaining[0].Proposed != "new-a.mkv" {
+		t.Fatalf("failed metadata row = %#v", remaining[0])
+	}
+	if remaining[0].Status != media.Ready || !isMetadataWriteFailure(remaining[0]) {
+		t.Fatalf("failed metadata status/message = %q / %q", remaining[0].Status, remaining[0].Message)
+	}
+	if remaining[0].MetadataPending != true {
+		t.Fatal("failed metadata row should stay pending for Write Metadata retry")
+	}
+	if remaining[1].Path != "keep.mkv" {
+		t.Fatalf("unrenamed row = %#v", remaining[1])
+	}
+
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	application := New(app, settings.NewStore(app.Preferences()), rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	if got := application.statusText(remaining[0]); got != metadataWriteFailedStatus {
+		t.Fatalf("status text = %q", got)
+	}
+	if tip := application.statusTip(remaining[0]); tip != remaining[0].Message {
+		t.Fatalf("status tip = %q, want %q", tip, remaining[0].Message)
 	}
 }
 
