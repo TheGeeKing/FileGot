@@ -872,6 +872,27 @@ func TestMarkMetadataPendingRespectsSetting(t *testing.T) {
 	}
 }
 
+func TestMarkMetadataPendingOnProbeError(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	options.WriteEmbeddedMetadata = true
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	files := []media.File{{
+		Path: filepath.Join(t.TempDir(), "missing.mkv"), Status: media.Ready, Proposed: "Movie.mkv",
+		Candidate: media.Candidate{ID: 1, Kind: media.Movie, Title: "Movie"},
+	}}
+	application.markMetadataPending(files)
+	if !files[0].MetadataPending {
+		t.Fatal("probe failure should keep MetadataPending true")
+	}
+}
+
 func TestApplyEmbeddedMetadataAfterRenameWritesDestination(t *testing.T) {
 	var wrote []string
 	operations := []rename.Operation{

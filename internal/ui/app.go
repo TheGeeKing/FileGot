@@ -1417,9 +1417,10 @@ func (application *Application) markMetadataPending(files []media.File) {
 		if file.Path == "" || file.Status != media.Ready || !metadata.Supported(file.Path) {
 			continue
 		}
-		file.MetadataPending, _ = application.metadataWriter.Differs(
+		differs, err := application.metadataWriter.Differs(
 			file.Path, embeddedMetadata(*file, application.embeddedMetadataFields()),
 		)
+		file.MetadataPending = differs || err != nil
 	}
 }
 
