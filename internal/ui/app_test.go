@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"image/color"
 	"math"
 	"net/http"
@@ -125,15 +126,19 @@ func TestMainWindowPresentation(t *testing.T) {
 	application.table.Refresh()
 	widths := make(map[string]float32)
 	for _, object := range test.LaidOutObjects(application.table) {
-		if label, ok := object.(*widget.Label); ok {
+		switch label := object.(type) {
+		case *tipLabel:
+			widths[label.Text] = label.Size().Width
+		case *widget.Label:
 			widths[label.Text] = label.Size().Width
 		}
 	}
 	original, status, proposed := widths["Original File"], widths["Status"], widths["Proposed Name"]
-	statusLabel := widget.NewLabel(string(media.Unsupported))
+	statusLabel := widget.NewLabel(unsupportedMetadataStatus)
 	statusLabel.SizeName = theme.SizeNameCaptionText
-	if status > 140 || status < statusLabel.MinSize().Width+theme.Padding()*2 ||
-		math.Abs(float64(original-proposed)) > 1 || original+status+proposed > 700 {
+	minStatus := statusLabel.MinSize().Width + theme.Padding()*2
+	if status < minStatus || status > minStatus+40 ||
+		math.Abs(float64(original-proposed)) > 1 || original+status+proposed > 780 {
 		t.Fatalf("responsive column widths = %.1f / %.1f / %.1f", original, status, proposed)
 	}
 
@@ -819,7 +824,7 @@ func TestRenameOperationsNeverUseTransform(t *testing.T) {
 	}
 }
 
-func TestUnsupportedMetadataResultOnlyAffectsSelectionAndCanBeCleared(t *testing.T) {
+func TestUnsupportedContainerKeepsReadyRenameWithStatusLabel(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
@@ -832,23 +837,38 @@ func TestUnsupportedMetadataResultOnlyAffectsSelectionAndCanBeCleared(t *testing
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
 	application.files = []media.File{
 		{Path: "selected.avi", Status: media.Ready, Proposed: "selected-new.avi"},
-		{Path: "other.avi", Status: media.Ready, Proposed: "other-new.avi"},
+		{Path: "other.mkv", Status: media.Ready, Proposed: "other-new.mkv"},
 	}
 	application.selectedRows = map[int]bool{0: true}
-	application.markUnsupportedMetadataRows()
-	if application.files[0].Status != media.Unsupported || application.files[1].Status != media.Ready {
-		t.Fatalf("statuses = %q, %q", application.files[0].Status, application.files[1].Status)
+
+	if application.files[0].Status != media.Ready {
+		t.Fatalf("status = %q, want ready", application.files[0].Status)
+	}
+	if got := application.statusText(application.files[0]); got != "ready (unsupported metadata)" {
+		t.Fatalf("status text = %q", got)
+	}
+	if tip := application.statusTip(application.files[0]); tip == "" {
+		t.Fatal("expected status tip explaining unsupported metadata still allows rename")
+	}
+	if application.renameCandidateCount() != 1 {
+		t.Fatalf("rename candidates = %d, want 1", application.renameCandidateCount())
+	}
+	if ops := application.renameOperations(); len(ops) != 1 || ops[0].From != "selected.avi" {
+		t.Fatalf("rename operations = %#v", ops)
+	}
+	if pending := application.metadataBeforeRename(application.renameOperations()); len(pending) != 0 {
+		t.Fatalf("unsupported container must skip metadata write: %#v", pending)
 	}
 
 	options.WriteEmbeddedMetadata = false
 	if err := store.Save(options); err != nil {
 		t.Fatal(err)
 	}
-	if err := application.refreshProposedNames(); err != nil {
-		t.Fatal(err)
+	if got := application.statusText(application.files[0]); got != string(media.Ready) {
+		t.Fatalf("status text with metadata off = %q", got)
 	}
-	if application.files[0].Status != media.Ready {
-		t.Fatal("disabling metadata should restore filename-only rename eligibility")
+	if tip := application.statusTip(application.files[0]); tip != "" {
+		t.Fatalf("tip with metadata off = %q", tip)
 	}
 }
 
@@ -1210,7 +1230,14 @@ func expectedRows(files []media.File) (paired, unpaired int) {
 
 func fileCellParts(object fyne.CanvasObject) (*canvas.Rectangle, *widget.Label) {
 	objects := object.(*fyne.Container).Objects
-	return objects[0].(*canvas.Rectangle), objects[1].(*widget.Label)
+	switch label := objects[1].(type) {
+	case *tipLabel:
+		return objects[0].(*canvas.Rectangle), &label.Label
+	case *widget.Label:
+		return objects[0].(*canvas.Rectangle), label
+	default:
+		panic(fmt.Sprintf("unexpected file cell label type %T", objects[1]))
+	}
 }
 
 func findLabelWithText(object fyne.CanvasObject, text string) *widget.Label {

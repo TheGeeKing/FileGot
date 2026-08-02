@@ -116,7 +116,7 @@ func (application *Application) build() {
 		func() (int, int) { return len(application.files) + 1, 3 },
 		func() fyne.CanvasObject {
 			background := canvas.NewRectangle(color.Transparent)
-			label := widget.NewLabel("")
+			label := newTipLabel()
 			label.SizeName = theme.SizeNameCaptionText
 			label.Truncation = fyne.TextTruncateEllipsis
 			return container.NewStack(background, label)
@@ -124,7 +124,7 @@ func (application *Application) build() {
 		func(id widget.TableCellID, object fyne.CanvasObject) {
 			cell := object.(*fyne.Container)
 			background := cell.Objects[0].(*canvas.Rectangle)
-			label := cell.Objects[1].(*widget.Label)
+			label := cell.Objects[1].(*tipLabel)
 			label.TextStyle = fyne.TextStyle{Bold: id.Row == 0}
 			if id.Row == 0 {
 				background.FillColor = theme.ColorForWidget(theme.ColorNameHeaderBackground, application.table)
@@ -138,6 +138,7 @@ func (application *Application) build() {
 					}
 				}
 				label.SetText(header)
+				label.SetTip("")
 				return
 			}
 			file := application.files[id.Row-1]
@@ -150,7 +151,12 @@ func (application *Application) build() {
 				)
 			}
 			background.Refresh()
-			label.SetText(fileColumnText(file, id.Col))
+			label.SetText(application.fileColumnText(file, id.Col))
+			if id.Col == 1 {
+				label.SetTip(application.statusTip(file))
+			} else {
+				label.SetTip("")
+			}
 		},
 	)
 	application.table.StickyRowCount = 1
@@ -271,12 +277,8 @@ func (application *Application) sortFiles(column int) {
 	application.sortAscending = column != application.sortColumn || !application.sortAscending
 	application.sortColumn = column
 	sort.SliceStable(application.files, func(left, right int) bool {
-		a := fileColumnText(application.files[left], column)
-		b := fileColumnText(application.files[right], column)
-		if column == 1 {
-			a = string(rowStatus(application.files[left]))
-			b = string(rowStatus(application.files[right]))
-		}
+		a := application.fileColumnText(application.files[left], column)
+		b := application.fileColumnText(application.files[right], column)
 		a = strings.ToLower(a)
 		b = strings.ToLower(b)
 		if application.sortAscending {
@@ -332,7 +334,7 @@ func (application *Application) clearSelection() {
 	application.selectionAnchor = -1
 }
 
-func fileColumnText(file media.File, column int) string {
+func (application *Application) fileColumnText(file media.File, column int) string {
 	switch column {
 	case 0:
 		if file.Path == "" {
@@ -340,10 +342,41 @@ func fileColumnText(file media.File, column int) string {
 		}
 		return filepath.Base(file.Path)
 	case 1:
-		return string(rowStatus(file))
+		return application.statusText(file)
 	default:
 		return file.Proposed
 	}
+}
+
+const (
+	unsupportedMetadataStatus = "ready (unsupported metadata)"
+	unsupportedMetadataTip    = "Embedded metadata writing is unsupported for this container, but rename still works."
+)
+
+func (application *Application) writeEmbeddedMetadataEnabled() bool {
+	return application.settings != nil && application.settings.Load().WriteEmbeddedMetadata
+}
+
+func (application *Application) unsupportedEmbeddedMetadata(file media.File) bool {
+	return application.writeEmbeddedMetadataEnabled() &&
+		file.Status == media.Ready &&
+		file.Path != "" &&
+		!unchanged(file) &&
+		!metadata.Supported(file.Path)
+}
+
+func (application *Application) statusText(file media.File) string {
+	if application.unsupportedEmbeddedMetadata(file) {
+		return unsupportedMetadataStatus
+	}
+	return string(rowStatus(file))
+}
+
+func (application *Application) statusTip(file media.File) string {
+	if application.unsupportedEmbeddedMetadata(file) {
+		return unsupportedMetadataTip
+	}
+	return ""
 }
 
 func (application *Application) addFile() {
@@ -1193,7 +1226,6 @@ func (application *Application) confirmRename() {
 func (application *Application) applyRename() {
 	operations := application.renameOperations()
 	if len(operations) == 0 {
-		application.markUnsupportedMetadataRows()
 		application.setStatus("No selected files are ready to rename.")
 		application.refresh()
 		return
@@ -1223,7 +1255,6 @@ func (application *Application) applyRename() {
 				application.setStatus("Rename failed; FileGot attempted to restore original names.")
 			} else {
 				application.files = remainingAfterRename(application.files, operations)
-				application.markUnsupportedMetadataRows()
 				application.clearSelection()
 				status := fmt.Sprintf("Renamed %d file(s). Undo Last is available.", len(operations))
 				if len(writeErrors) > 0 {
@@ -1379,22 +1410,6 @@ func (application *Application) writeMetadata() {
 	}()
 }
 
-func (application *Application) markUnsupportedMetadataRows() {
-	if !application.settings.Load().WriteEmbeddedMetadata {
-		return
-	}
-	for index := range application.files {
-		if len(application.selectedRows) > 0 && !application.selectedRows[index] {
-			continue
-		}
-		file := &application.files[index]
-		if file.Status == media.Ready && !unchanged(*file) && !metadata.Supported(file.Path) {
-			file.Status = media.Unsupported
-			file.Message = "embedded metadata is not supported for this container"
-		}
-	}
-}
-
 func remainingAfterRename(files []media.File, operations []rename.Operation) []media.File {
 	renamed := make(map[string]bool, len(operations))
 	for _, operation := range operations {
@@ -1413,11 +1428,6 @@ func (application *Application) refreshProposedNames() error {
 	files := append([]media.File(nil), application.files...)
 	options := application.settings.Load()
 	for index, file := range files {
-		if !options.WriteEmbeddedMetadata && file.Status == media.Unsupported &&
-			file.Message == "embedded metadata is not supported for this container" {
-			files[index].Status = media.Ready
-			files[index].Message = ""
-		}
 		if !file.Imported {
 			continue
 		}
@@ -1655,8 +1665,10 @@ func (application *Application) updateDetails() {
 			file.Candidate.Episode,
 		)
 	}
-	details += " — " + string(rowStatus(file))
-	if file.Message != "" {
+	details += " — " + application.statusText(file)
+	if tip := application.statusTip(file); tip != "" {
+		details += " — " + tip
+	} else if file.Message != "" {
 		details += " — " + file.Message
 	}
 	application.details.SetText(details)
@@ -1953,9 +1965,53 @@ func (layout *fileTableLayout) MinSize([]fyne.CanvasObject) fyne.Size {
 }
 
 func fileStatusColumnWidth() float32 {
-	status := widget.NewLabel(string(media.Unsupported))
+	status := widget.NewLabel(unsupportedMetadataStatus)
 	status.SizeName = theme.SizeNameCaptionText
 	header := widget.NewLabelWithStyle("Status", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	header.SizeName = theme.SizeNameCaptionText
 	return max(status.MinSize().Width, header.MinSize().Width) + theme.Padding()*2
+}
+
+type tipLabel struct {
+	widget.Label
+	tip   string
+	popup *widget.PopUp
+}
+
+func newTipLabel() *tipLabel {
+	label := &tipLabel{}
+	label.ExtendBaseWidget(label)
+	return label
+}
+
+func (label *tipLabel) SetTip(tip string) {
+	label.tip = tip
+	if tip == "" {
+		label.MouseOut()
+	}
+}
+
+func (label *tipLabel) MouseIn(event *desktop.MouseEvent) {
+	if label.tip == "" {
+		return
+	}
+	canvas := fyne.CurrentApp().Driver().CanvasForObject(label)
+	if canvas == nil {
+		return
+	}
+	label.MouseOut()
+	content := widget.NewLabel(label.tip)
+	content.Wrapping = fyne.TextWrapWord
+	label.popup = widget.NewPopUp(content, canvas)
+	label.popup.ShowAtPosition(event.AbsolutePosition.Add(fyne.NewPos(12, 12)))
+}
+
+func (label *tipLabel) MouseMoved(*desktop.MouseEvent) {}
+
+func (label *tipLabel) MouseOut() {
+	if label.popup == nil {
+		return
+	}
+	label.popup.Hide()
+	label.popup = nil
 }
