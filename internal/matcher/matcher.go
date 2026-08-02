@@ -380,24 +380,16 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 			original, err := matcher.client.EpisodeDetails(
 				ctx, candidate.ID, candidate.Season, candidate.Episode, candidate.OriginalLanguage,
 			)
-			if err != nil {
-				setError(&file, err)
-				return file
+			if err == nil {
+				candidate.OriginalEpisodeTitle = original.Name
 			}
-			candidate.OriginalEpisodeTitle = original.Name
 		}
 		if options.WriteEmbeddedMetadata {
-			if err := enrichEpisodeEmbedded(ctx, matcher.client, &candidate, options); err != nil {
-				setError(&file, err)
-				return file
-			}
+			enrichEpisodeEmbedded(ctx, matcher.client, &candidate, options)
 		}
 	}
 	if candidate.Kind == media.Movie && options.WriteEmbeddedMetadata {
-		if err := enrichMovieEmbedded(ctx, matcher.client, &candidate, options); err != nil {
-			setError(&file, err)
-			return file
-		}
+		enrichMovieEmbedded(ctx, matcher.client, &candidate, options)
 	}
 
 	if options.NamingMode == settings.NamingAdvanced &&
@@ -425,15 +417,12 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 	return file
 }
 
-func enrichMovieEmbedded(ctx context.Context, client *tmdb.Client, candidate *media.Candidate, options settings.Settings) error {
+func enrichMovieEmbedded(ctx context.Context, client *tmdb.Client, candidate *media.Candidate, options settings.Settings) {
 	country := localeCountry(options.Language)
-	details, err := client.MovieDetails(ctx, candidate.ID, options.Language)
-	if err != nil {
-		return err
+	if details, err := client.MovieDetails(ctx, candidate.ID, options.Language); err == nil {
+		candidate.Genre = joinGenreNames(details.Genres)
 	}
-	candidate.Genre = joinGenreNames(details.Genres)
-	dates, err := client.MovieReleaseDates(ctx, candidate.ID, country)
-	if err == nil {
+	if dates, err := client.MovieReleaseDates(ctx, candidate.ID, country); err == nil {
 		regional := ""
 		for _, release := range dates {
 			date := release.Date
@@ -454,38 +443,28 @@ func enrichMovieEmbedded(ctx context.Context, client *tmdb.Client, candidate *me
 	if year := dateYear(candidate.ReleaseDate); year > 0 {
 		candidate.Year = year
 	}
-	credits, err := client.MovieCredits(ctx, candidate.ID)
-	if err != nil {
-		return err
+	if credits, err := client.MovieCredits(ctx, candidate.ID); err == nil {
+		candidate.Directors, candidate.Writers, candidate.Actors = creditNames(credits, 5)
 	}
-	candidate.Directors, candidate.Writers, candidate.Actors = creditNames(credits, 5)
-	return nil
 }
 
-func enrichEpisodeEmbedded(ctx context.Context, client *tmdb.Client, candidate *media.Candidate, options settings.Settings) error {
+func enrichEpisodeEmbedded(ctx context.Context, client *tmdb.Client, candidate *media.Candidate, options settings.Settings) {
 	country := localeCountry(options.Language)
-	show, err := client.ShowDetails(ctx, candidate.ID, options.Language)
-	if err != nil {
-		return err
+	if show, err := client.ShowDetails(ctx, candidate.ID, options.Language); err == nil {
+		candidate.Genre = joinGenreNames(show.Genres)
 	}
-	candidate.Genre = joinGenreNames(show.Genres)
 	if rating, err := client.ShowContentRatings(ctx, candidate.ID, country); err == nil {
 		candidate.LawRating = rating
 	}
-	episodeCredits, err := client.EpisodeCredits(ctx, candidate.ID, candidate.Season, candidate.Episode)
-	if err != nil {
-		return err
+	if episodeCredits, err := client.EpisodeCredits(ctx, candidate.ID, candidate.Season, candidate.Episode); err == nil {
+		directors, writers, _ := creditNames(episodeCredits, 0)
+		candidate.Directors = directors
+		candidate.Writers = writers
 	}
-	directors, writers, _ := creditNames(episodeCredits, 0)
-	candidate.Directors = directors
-	candidate.Writers = writers
-	showCredits, err := client.ShowCredits(ctx, candidate.ID)
-	if err != nil {
-		return err
+	if showCredits, err := client.ShowCredits(ctx, candidate.ID); err == nil {
+		_, _, actors := creditNames(showCredits, 5)
+		candidate.Actors = actors
 	}
-	_, _, actors := creditNames(showCredits, 5)
-	candidate.Actors = actors
-	return nil
 }
 
 func joinGenreNames(genres []tmdb.Genre) string {
