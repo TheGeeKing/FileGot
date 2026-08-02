@@ -172,7 +172,7 @@ func ShowSettings(app fyne.App, store *settings.Store, onSaved func()) {
 	fieldTitle.SetChecked(fields.Title)
 	fieldOriginalTitle := widget.NewCheck("Original title", nil)
 	fieldOriginalTitle.SetChecked(fields.OriginalTitle)
-	fieldComment := widget.NewCheck("Comment / overview", nil)
+	fieldComment := widget.NewCheck("Comment (overview)", nil)
 	fieldComment.SetChecked(fields.Comment)
 	fieldDateReleased := widget.NewCheck("Date released", nil)
 	fieldDateReleased.SetChecked(fields.DateReleased)
