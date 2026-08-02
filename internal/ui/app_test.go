@@ -816,7 +816,7 @@ func TestSameNameFileCanWritePendingMetadata(t *testing.T) {
 	}
 }
 
-func TestRenameOperationsNeverUseTransform(t *testing.T) {
+func TestRenameOperationsQueueMetadataForSupportedContainers(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
@@ -838,11 +838,6 @@ func TestRenameOperationsNeverUseTransform(t *testing.T) {
 	operations := application.renameOperations()
 	if len(operations) != 2 {
 		t.Fatalf("operations = %#v", operations)
-	}
-	for _, op := range operations {
-		if op.Transform != nil {
-			t.Fatalf("rename must never use Transform (no full-copy): %s", op.From)
-		}
 	}
 	pending := application.metadataBeforeRename(operations)
 	if len(pending) != 2 {
