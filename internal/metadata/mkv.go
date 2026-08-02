@@ -173,7 +173,7 @@ func mergeMatroskaTags(tags *matroskaTags, values Values) {
 	episode := values.IsEpisode
 	if episode {
 		upsertMatroska(tags, 70, "TITLE", values.Series, episode)
-		upsertMatroska(tags, 60, "PART_NUMBER", optionalInt(values.Season), episode)
+		upsertMatroska(tags, 60, "PART_NUMBER", optionalSeason(values.Season), episode)
 		upsertMatroska(tags, 50, "TITLE", values.Title, episode)
 		upsertMatroska(tags, 50, "PART_NUMBER", optionalInt(values.Episode), episode)
 	} else {
@@ -208,7 +208,7 @@ func expectedMatroskaTags(values Values) map[string]string {
 		if values.Series != "" {
 			expected["70:TITLE"] = values.Series
 		}
-		expected["60:PART_NUMBER"] = optionalInt(values.Season)
+		expected["60:PART_NUMBER"] = optionalSeason(values.Season)
 		expected["50:PART_NUMBER"] = optionalInt(values.Episode)
 	}
 	for _, name := range values.Directors {

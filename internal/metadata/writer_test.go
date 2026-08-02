@@ -24,6 +24,7 @@ func TestWriteInPlaceMP4UsesFFmpegAndReplacesOriginal(t *testing.T) {
 	err := writer.WriteInPlace(source, Values{
 		Title: "Pilot", OriginalTitle: "Original Pilot", Date: "2024-01-02",
 		Series: "Show", Season: 1, Episode: 2, TMDBID: 42, Overview: "Story",
+		IsEpisode: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +51,27 @@ func TestWriteInPlaceMP4UsesFFmpegAndReplacesOriginal(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 1 {
 		t.Fatalf("leftover files: %v", entries)
+	}
+}
+
+func TestFFmpegMetadataEntriesKeepsSeasonZeroForSpecials(t *testing.T) {
+	entries := ffmpegMetadataEntries(Values{
+		Title: "Special", Series: "Show", Season: 0, Episode: 1, IsEpisode: true,
+	})
+	var season string
+	for _, entry := range entries {
+		if entry.key == "season_number" {
+			season = entry.value
+		}
+	}
+	if season != "0" {
+		t.Fatalf("season_number = %q, want 0 for specials", season)
+	}
+	movie := ffmpegMetadataEntries(Values{Title: "Movie", Season: 0})
+	for _, entry := range movie {
+		if entry.key == "season_number" && entry.value != "" {
+			t.Fatalf("movie season_number = %q, want empty", entry.value)
+		}
 	}
 }
 

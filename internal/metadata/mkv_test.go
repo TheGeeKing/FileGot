@@ -47,6 +47,12 @@ func TestExpectedMatroskaTagsIgnoresSeriesOnMovies(t *testing.T) {
 	if episode["70:TITLE"] != "Show" || episode["60:PART_NUMBER"] != "1" || episode["50:PART_NUMBER"] != "2" {
 		t.Fatalf("episode expectations = %#v", episode)
 	}
+	special := expectedMatroskaTags(Values{
+		Title: "Special", Series: "Show", Season: 0, Episode: 1, IsEpisode: true,
+	})
+	if special["60:PART_NUMBER"] != "0" {
+		t.Fatalf("specials season = %#v, want PART_NUMBER 0", special)
+	}
 }
 
 func TestMergeMatroskaTagsUsesSpecTargetsAndPreservesExistingTags(t *testing.T) {

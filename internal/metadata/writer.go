@@ -207,12 +207,16 @@ func (writer *Writer) writeMP4InPlace(path string, values Values) error {
 }
 
 func ffmpegMetadataEntries(values Values) []struct{ key, value string } {
+	season := ""
+	if values.IsEpisode {
+		season = optionalSeason(values.Season)
+	}
 	return []struct{ key, value string }{
 		{"title", values.Title},
 		{"original_title", values.OriginalTitle},
 		{"date", values.Date},
 		{"show", values.Series},
-		{"season_number", optionalInt(values.Season)},
+		{"season_number", season},
 		{"episode_sort", optionalInt(values.Episode)},
 		{"tmdb_id", optionalInt(values.TMDBID)},
 		{"synopsis", values.Overview},
@@ -226,6 +230,14 @@ func ffmpegMetadataEntries(values Values) []struct{ key, value string } {
 
 func optionalInt(value int) string {
 	if value == 0 {
+		return ""
+	}
+	return strconv.Itoa(value)
+}
+
+// optionalSeason keeps season 0, which Matroska and MP4 use for specials.
+func optionalSeason(value int) string {
+	if value < 0 {
 		return ""
 	}
 	return strconv.Itoa(value)
