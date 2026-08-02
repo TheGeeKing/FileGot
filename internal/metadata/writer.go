@@ -178,6 +178,10 @@ func (writer *Writer) WriteInPlace(path string, values Values) error {
 }
 
 func (writer *Writer) writeMP4InPlace(path string, values Values) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
 	tmp := path + ".filegot-tmp" + filepath.Ext(path)
 	args := []string{"-v", "error", "-y", "-i", path, "-map", "0", "-c", "copy", "-map_metadata", "0"}
 	args = append(args, "-movflags", "use_metadata_tags")
@@ -190,6 +194,10 @@ func (writer *Writer) writeMP4InPlace(path string, values Values) error {
 	if output, err := writer.runTool("ffmpeg", args...); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("ffmpeg: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if err := os.Chmod(tmp, info.Mode().Perm()); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("preserve mode: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)

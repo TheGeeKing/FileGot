@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 func TestWriteInPlaceMP4UsesFFmpegAndReplacesOriginal(t *testing.T) {
 	dir := t.TempDir()
 	source := dir + "/movie.mp4"
-	if err := os.WriteFile(source, []byte("original"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("original"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 	var got []string
@@ -38,6 +39,13 @@ func TestWriteInPlaceMP4UsesFFmpegAndReplacesOriginal(t *testing.T) {
 	content, _ := os.ReadFile(source)
 	if string(content) != "tagged" {
 		t.Fatalf("original not replaced: %q", content)
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode = %o, want 0640 preserved from original", info.Mode().Perm())
 	}
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 1 {
