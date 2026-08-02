@@ -856,6 +856,7 @@ func TestMarkMetadataPendingRespectsSetting(t *testing.T) {
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
 	options := settings.Defaults()
+	options.TMDBToken = "token"
 	options.WriteEmbeddedMetadata = false
 	if err := store.Save(options); err != nil {
 		t.Fatal(err)
