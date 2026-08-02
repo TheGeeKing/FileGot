@@ -85,30 +85,28 @@ func (writer *Writer) WriteMKVInPlace(path string, values Values) error {
 	}
 
 	if output, editErr := writer.run("mkvpropedit", path, "--tags", "all:"+updatePath); editErr != nil {
-		restore := "all:"
-		if hadTags {
-			restore += backupPath
-		}
-		restoreOutput, restoreErr := writer.run("mkvpropedit", path, "--tags", restore)
-		return fmt.Errorf(
-			"mkvpropedit: %w: %s; restore: %v: %s",
-			editErr, strings.TrimSpace(string(output)), restoreErr, strings.TrimSpace(string(restoreOutput)),
-		)
+		return writer.mkvpropeditFailure(path, backupPath, hadTags, "mkvpropedit", editErr, output)
 	}
 	if values.Title != "" {
 		if output, editErr := writer.run("mkvpropedit", path, "--edit", "info", "--set", "title="+values.Title); editErr != nil {
-			restore := "all:"
-			if hadTags {
-				restore += backupPath
-			}
-			restoreOutput, restoreErr := writer.run("mkvpropedit", path, "--tags", restore)
-			return fmt.Errorf(
-				"mkvpropedit title: %w: %s; restore tags: %v: %s",
-				editErr, strings.TrimSpace(string(output)), restoreErr, strings.TrimSpace(string(restoreOutput)),
-			)
+			return writer.mkvpropeditFailure(path, backupPath, hadTags, "mkvpropedit title", editErr, output)
 		}
 	}
 	return nil
+}
+
+func (writer *Writer) mkvpropeditFailure(
+	path, backupPath string, hadTags bool, operation string, editErr error, output []byte,
+) error {
+	restore := "all:"
+	if hadTags {
+		restore += backupPath
+	}
+	restoreOutput, restoreErr := writer.run("mkvpropedit", path, "--tags", restore)
+	return fmt.Errorf(
+		"%s: %w: %s; restore: %v: %s",
+		operation, editErr, strings.TrimSpace(string(output)), restoreErr, strings.TrimSpace(string(restoreOutput)),
+	)
 }
 
 func (writer *Writer) mkvDiffers(path string, values Values) (bool, error) {
