@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -135,7 +136,32 @@ func (writer *Writer) mkvDiffers(path string, values Values) (bool, error) {
 			return true, nil
 		}
 	}
-	return false, nil
+	if values.Title == "" {
+		return false, nil
+	}
+	segmentTitle, err := writer.mkvSegmentTitle(path)
+	if err != nil {
+		return false, err
+	}
+	return segmentTitle != values.Title, nil
+}
+
+func (writer *Writer) mkvSegmentTitle(path string) (string, error) {
+	output, err := writer.run("mkvmerge", "-J", path)
+	if err != nil {
+		return "", fmt.Errorf("mkvmerge identify: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	var info struct {
+		Container struct {
+			Properties struct {
+				Title string `json:"title"`
+			} `json:"properties"`
+		} `json:"container"`
+	}
+	if err := json.Unmarshal(output, &info); err != nil {
+		return "", fmt.Errorf("parse mkvmerge identify: %w", err)
+	}
+	return info.Container.Properties.Title, nil
 }
 
 func mergeMatroskaTags(tags *matroskaTags, values Values) {

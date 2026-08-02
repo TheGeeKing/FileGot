@@ -9,6 +9,29 @@ import (
 	"testing"
 )
 
+func TestMKVDiffersDetectsSegmentTitleMismatch(t *testing.T) {
+	writer := &Writer{run: func(name string, args ...string) ([]byte, error) {
+		switch name {
+		case "mkvextract":
+			path := args[2]
+			content := []byte(`<?xml version="1.0"?><Tags><Tag><Targets><TargetTypeValue>50</TargetTypeValue><TargetType>EPISODE</TargetType></Targets><Simple><Name>TITLE</Name><String>Pilot</String><TagLanguageIETF>und</TagLanguageIETF></Simple></Tag></Tags>`)
+			if err := os.WriteFile(path, content, 0o600); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		case "mkvmerge":
+			return []byte(`{"container":{"properties":{"title":"Old Title"}}}`), nil
+		default:
+			t.Fatalf("unexpected tool %s", name)
+			return nil, nil
+		}
+	}}
+	different, err := writer.Differs("episode.mkv", Values{Title: "Pilot", IsEpisode: true})
+	if err != nil || !different {
+		t.Fatalf("segment title mismatch: different=%v err=%v", different, err)
+	}
+}
+
 func TestMergeMatroskaTagsUsesSpecTargetsAndPreservesExistingTags(t *testing.T) {
 	tags := matroskaTags{Tags: []matroskaTag{{
 		Targets: matroskaTargets{TypeValue: 30},
