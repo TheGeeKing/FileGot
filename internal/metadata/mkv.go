@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -39,14 +40,12 @@ type matroskaSimple struct {
 }
 
 func (writer *Writer) WriteMKVInPlace(path string, values Values) error {
-	backup, err := os.CreateTemp("", "filegot-mkv-tags-backup-*.xml")
+	dir, err := os.MkdirTemp("", "filegot-mkv-*")
 	if err != nil {
 		return err
 	}
-	backupPath := backup.Name()
-	_ = backup.Close()
-	_ = os.Remove(backupPath)
-	defer os.Remove(backupPath)
+	defer os.RemoveAll(dir)
+	backupPath := filepath.Join(dir, "backup.xml")
 
 	hadTags := true
 	if output, extractErr := writer.runTool("mkvextract", path, "tags", backupPath); extractErr != nil {
@@ -67,22 +66,13 @@ func (writer *Writer) WriteMKVInPlace(path string, values Values) error {
 	}
 	mergeMatroskaTags(&current, values)
 
-	update, err := os.CreateTemp("", "filegot-mkv-tags-update-*.xml")
-	if err != nil {
-		return err
-	}
-	updatePath := update.Name()
-	defer os.Remove(updatePath)
+	updatePath := filepath.Join(dir, "update.xml")
 	content, err := xml.MarshalIndent(current, "", "  ")
-	if err == nil {
-		_, err = update.Write(append([]byte(xml.Header), content...))
-	}
-	closeErr := update.Close()
 	if err != nil {
 		return err
 	}
-	if closeErr != nil {
-		return closeErr
+	if err := os.WriteFile(updatePath, append([]byte(xml.Header), content...), 0o600); err != nil {
+		return err
 	}
 
 	if output, editErr := writer.runTool("mkvpropedit", path, "--tags", "all:"+updatePath); editErr != nil {
@@ -111,14 +101,12 @@ func (writer *Writer) mkvpropeditFailure(
 }
 
 func (writer *Writer) mkvDiffers(path string, values Values) (bool, error) {
-	extracted, err := os.CreateTemp("", "filegot-mkv-tags-read-*.xml")
+	dir, err := os.MkdirTemp("", "filegot-mkv-read-*")
 	if err != nil {
 		return false, err
 	}
-	extractedPath := extracted.Name()
-	_ = extracted.Close()
-	_ = os.Remove(extractedPath)
-	defer os.Remove(extractedPath)
+	defer os.RemoveAll(dir)
+	extractedPath := filepath.Join(dir, "tags.xml")
 	if output, extractErr := writer.runTool("mkvextract", path, "tags", extractedPath); extractErr != nil {
 		return false, fmt.Errorf("mkvextract: %w: %s", extractErr, strings.TrimSpace(string(output)))
 	}
