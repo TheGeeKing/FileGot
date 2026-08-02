@@ -204,6 +204,7 @@ func movieCandidate(result tmdb.Movie, options settings.Settings) media.Candidat
 		ID: result.ID, Kind: media.Movie, Title: chooseTitle(result.Title, result.OriginalTitle, options.PreferOriginalTitle),
 		OriginalTitle: result.OriginalTitle, Year: dateYear(result.ReleaseDate),
 		PosterPath: result.PosterPath, Overview: result.Overview,
+		ReleaseDate: result.ReleaseDate,
 	}
 }
 
@@ -213,6 +214,7 @@ func showCandidate(result tmdb.Show, parsed media.Parsed, options settings.Setti
 		OriginalTitle: result.OriginalName, SeriesYear: dateYear(result.FirstAirDate),
 		PosterPath: result.PosterPath, Overview: result.Overview,
 		Season: parsed.Season, Episode: parsed.Episode,
+		OriginalLanguage: result.OriginalLanguage,
 	}
 }
 
@@ -366,9 +368,28 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 			return file
 		}
 		candidate.EpisodeTitle = chooseTitle(episode.Name, episode.OriginalName, options.PreferOriginalTitle)
+		candidate.EpisodeTMDBID = episode.ID
+		candidate.OriginalEpisodeTitle = episode.OriginalName
+		candidate.AirDate = episode.AirDate
+		candidate.Overview = episode.Overview
 		if candidate.EpisodeTitle == "" {
 			candidate.EpisodeTitle = fmt.Sprintf("Episode %02d", candidate.Episode)
 		}
+		if options.WriteEmbeddedMetadata && candidate.OriginalEpisodeTitle == "" &&
+			candidate.OriginalLanguage != "" {
+			original, err := matcher.client.EpisodeDetails(
+				ctx, candidate.ID, candidate.Season, candidate.Episode, candidate.OriginalLanguage,
+			)
+			if err == nil && original.OriginalName != "" {
+				candidate.OriginalEpisodeTitle = original.OriginalName
+			}
+		}
+		if options.WriteEmbeddedMetadata {
+			enrichEpisodeEmbedded(ctx, matcher.client, &candidate, options)
+		}
+	}
+	if candidate.Kind == media.Movie && options.WriteEmbeddedMetadata {
+		enrichMovieEmbedded(ctx, matcher.client, &candidate, options)
 	}
 
 	if options.NamingMode == settings.NamingAdvanced &&
@@ -396,11 +417,140 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 	return file
 }
 
+func enrichMovieEmbedded(ctx context.Context, client *tmdb.Client, candidate *media.Candidate, options settings.Settings) {
+	country := localeCountry(options.Language)
+	if details, err := client.MovieDetails(ctx, candidate.ID, options.Language); err == nil {
+		candidate.Genre = joinGenreNames(details.Genres)
+	}
+	if dates, err := client.MovieReleaseDates(ctx, candidate.ID, country); err == nil {
+		for _, release := range dates {
+			if candidate.LawRating == "" && release.Certification != "" {
+				candidate.LawRating = release.Certification
+			}
+		}
+		if regional := preferredMovieReleaseDate(dates); regional != "" {
+			candidate.ReleaseDate = regional
+		}
+	}
+	if credits, err := client.MovieCredits(ctx, candidate.ID); err == nil {
+		candidate.Directors, candidate.Writers, candidate.Actors = creditNames(credits, 5)
+	}
+}
+
+func preferredMovieReleaseDate(dates []tmdb.ReleaseDate) string {
+	bestDate := ""
+	bestRank := -1
+	for _, release := range dates {
+		date := release.Date
+		if len(date) >= 10 {
+			date = date[:10]
+		}
+		if date == "" {
+			continue
+		}
+		rank := movieReleaseDateRank(release.Type)
+		if bestDate == "" || rank > bestRank || (rank == bestRank && date < bestDate) {
+			bestDate = date
+			bestRank = rank
+		}
+	}
+	return bestDate
+}
+
+func movieReleaseDateRank(releaseType int) int {
+	switch releaseType {
+	case 3: // Theatrical
+		return 6
+	case 2: // Theatrical (limited)
+		return 5
+	case 4: // Digital
+		return 4
+	case 1: // Premiere
+		return 3
+	case 5: // Physical
+		return 2
+	case 6: // TV
+		return 1
+	default:
+		return 0
+	}
+}
+
+func enrichEpisodeEmbedded(ctx context.Context, client *tmdb.Client, candidate *media.Candidate, options settings.Settings) {
+	country := localeCountry(options.Language)
+	if show, err := client.ShowDetails(ctx, candidate.ID, options.Language); err == nil {
+		candidate.Genre = joinGenreNames(show.Genres)
+	}
+	if rating, err := client.ShowContentRatings(ctx, candidate.ID, country); err == nil {
+		candidate.LawRating = rating
+	}
+	if episodeCredits, err := client.EpisodeCredits(ctx, candidate.ID, candidate.Season, candidate.Episode); err == nil {
+		directors, writers, _ := creditNames(episodeCredits, 0)
+		candidate.Directors = directors
+		candidate.Writers = writers
+	}
+	if showCredits, err := client.ShowCredits(ctx, candidate.ID); err == nil {
+		_, _, actors := creditNames(showCredits, 5)
+		candidate.Actors = actors
+	}
+}
+
+func joinGenreNames(genres []tmdb.Genre) string {
+	names := make([]string, 0, len(genres))
+	for _, genre := range genres {
+		if name := strings.TrimSpace(genre.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, "; ")
+}
+
+func creditNames(credits tmdb.Credits, actorLimit int) (directors, writers, actors []string) {
+	seenDirector := map[string]bool{}
+	seenWriter := map[string]bool{}
+	for _, member := range credits.Crew {
+		name := strings.TrimSpace(member.Name)
+		if name == "" {
+			continue
+		}
+		switch member.Job {
+		case "Director":
+			if !seenDirector[name] {
+				seenDirector[name] = true
+				directors = append(directors, name)
+			}
+		case "Writer", "Screenplay", "Story":
+			if !seenWriter[name] {
+				seenWriter[name] = true
+				writers = append(writers, name)
+			}
+		}
+	}
+	for _, member := range credits.Cast {
+		name := strings.TrimSpace(member.Name)
+		if name == "" {
+			continue
+		}
+		actors = append(actors, name)
+		if actorLimit > 0 && len(actors) >= actorLimit {
+			break
+		}
+	}
+	return directors, writers, actors
+}
+
 func templateFor(kind media.Kind, options settings.Settings) string {
 	if kind == media.Episode {
 		return options.EpisodeTemplate
 	}
 	return options.MovieTemplate
+}
+
+func localeCountry(language string) string {
+	if index := strings.LastIndex(language, "-"); index >= 0 {
+		return strings.ToUpper(language[index+1:])
+	}
+	return ""
 }
 
 func applyCandidates(ctx context.Context, file *media.File, candidates []media.Candidate, options settings.Settings, matcher *Matcher) {

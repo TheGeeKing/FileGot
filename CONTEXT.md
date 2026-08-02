@@ -19,3 +19,7 @@ _Avoid_: Probe token
 **Raw media object**:
 A FileBot-compatible map of MediaInfo fields for a general, video, audio, text, image, or menu stream.
 _Avoid_: Probe output
+
+**Embedded metadata**:
+Descriptive title-provider fields written into a media container when the user opts in. Distinct from technical bindings and from raw media objects.
+_Avoid_: Tags, MediaInfo fields, technical metadata, technical binding

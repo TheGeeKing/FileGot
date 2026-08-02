@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image/color"
 	"path/filepath"
@@ -23,16 +24,18 @@ import (
 	"github.com/TheGeeKing/FileGot/internal/matcher"
 	"github.com/TheGeeKing/FileGot/internal/media"
 	"github.com/TheGeeKing/FileGot/internal/mediainfo"
+	"github.com/TheGeeKing/FileGot/internal/metadata"
 	"github.com/TheGeeKing/FileGot/internal/rename"
 	"github.com/TheGeeKing/FileGot/internal/settings"
 	"github.com/TheGeeKing/FileGot/internal/tmdb"
 )
 
 type Application struct {
-	app      fyne.App
-	window   fyne.Window
-	settings *settings.Store
-	renamer  *rename.Manager
+	app            fyne.App
+	window         fyne.Window
+	settings       *settings.Store
+	renamer        *rename.Manager
+	metadataWriter *metadata.Writer
 
 	clientMu    sync.Mutex
 	clientToken string
@@ -58,13 +61,15 @@ type Application struct {
 	reviewButton       *widget.Button
 	mediaDetailsButton *widget.Button
 	renameButton       *widget.Button
+	metadataButton     *widget.Button
 	undoButton         *widget.Button
 }
 
 func New(app fyne.App, store *settings.Store, renamer *rename.Manager) *Application {
 	application := &Application{
 		app: app, window: app.NewWindow("FileGot"), settings: store, renamer: renamer,
-		selected: -1, selectedRows: make(map[int]bool), selectionAnchor: -1, sortColumn: -1,
+		metadataWriter: metadata.NewWriter(),
+		selected:       -1, selectedRows: make(map[int]bool), selectionAnchor: -1, sortColumn: -1,
 	}
 	application.build()
 	return application
@@ -111,7 +116,7 @@ func (application *Application) build() {
 		func() (int, int) { return len(application.files) + 1, 3 },
 		func() fyne.CanvasObject {
 			background := canvas.NewRectangle(color.Transparent)
-			label := widget.NewLabel("")
+			label := newTipLabel()
 			label.SizeName = theme.SizeNameCaptionText
 			label.Truncation = fyne.TextTruncateEllipsis
 			return container.NewStack(background, label)
@@ -119,7 +124,7 @@ func (application *Application) build() {
 		func(id widget.TableCellID, object fyne.CanvasObject) {
 			cell := object.(*fyne.Container)
 			background := cell.Objects[0].(*canvas.Rectangle)
-			label := cell.Objects[1].(*widget.Label)
+			label := cell.Objects[1].(*tipLabel)
 			label.TextStyle = fyne.TextStyle{Bold: id.Row == 0}
 			if id.Row == 0 {
 				background.FillColor = theme.ColorForWidget(theme.ColorNameHeaderBackground, application.table)
@@ -133,6 +138,7 @@ func (application *Application) build() {
 					}
 				}
 				label.SetText(header)
+				label.SetTip("")
 				return
 			}
 			file := application.files[id.Row-1]
@@ -145,7 +151,12 @@ func (application *Application) build() {
 				)
 			}
 			background.Refresh()
-			label.SetText(fileColumnText(file, id.Col))
+			label.SetText(application.fileColumnText(file, id.Col))
+			if id.Col == 1 {
+				label.SetTip(application.statusTip(file))
+			} else {
+				label.SetTip("")
+			}
 		},
 	)
 	application.table.StickyRowCount = 1
@@ -176,6 +187,7 @@ func (application *Application) build() {
 	application.mediaDetailsButton = widget.NewButtonWithIcon("Media Details", theme.InfoIcon(), application.showMediaDetails)
 	application.renameButton = widget.NewButtonWithIcon("Rename", theme.ConfirmIcon(), application.confirmRename)
 	application.renameButton.Importance = widget.HighImportance
+	application.metadataButton = widget.NewButtonWithIcon("Write Metadata", theme.DocumentSaveIcon(), application.writeMetadata)
 	application.undoButton = widget.NewButtonWithIcon("Undo Last", theme.ContentUndoIcon(), application.undo)
 	showSettings := func() {
 		ShowSettings(application.app, application.settings, func() {
@@ -220,6 +232,7 @@ func (application *Application) build() {
 		application.reviewButton,
 		application.mediaDetailsButton,
 		application.renameButton,
+		application.metadataButton,
 		widget.NewSeparator(),
 		application.undoButton,
 	))
@@ -264,12 +277,8 @@ func (application *Application) sortFiles(column int) {
 	application.sortAscending = column != application.sortColumn || !application.sortAscending
 	application.sortColumn = column
 	sort.SliceStable(application.files, func(left, right int) bool {
-		a := fileColumnText(application.files[left], column)
-		b := fileColumnText(application.files[right], column)
-		if column == 1 {
-			a = string(rowStatus(application.files[left]))
-			b = string(rowStatus(application.files[right]))
-		}
+		a := application.fileColumnText(application.files[left], column)
+		b := application.fileColumnText(application.files[right], column)
 		a = strings.ToLower(a)
 		b = strings.ToLower(b)
 		if application.sortAscending {
@@ -325,7 +334,7 @@ func (application *Application) clearSelection() {
 	application.selectionAnchor = -1
 }
 
-func fileColumnText(file media.File, column int) string {
+func (application *Application) fileColumnText(file media.File, column int) string {
 	switch column {
 	case 0:
 		if file.Path == "" {
@@ -333,10 +342,57 @@ func fileColumnText(file media.File, column int) string {
 		}
 		return filepath.Base(file.Path)
 	case 1:
-		return string(file.Status)
+		return application.statusText(file)
 	default:
 		return file.Proposed
 	}
+}
+
+const (
+	unsupportedMetadataStatus = "ready (unsupported metadata)"
+	unsupportedMetadataTip    = "Embedded metadata writing is unsupported for this container, but rename still works."
+	metadataWriteFailedStatus = "ready (metadata write failed)"
+	metadataWriteFailedPrefix = "Embedded metadata could not be written"
+	metadataPendingTip        = "Filename already matches; use Write Metadata to update embedded fields."
+)
+
+func (application *Application) writeEmbeddedMetadataEnabled() bool {
+	return application.settings != nil && application.settings.Load().WriteEmbeddedMetadata
+}
+
+func (application *Application) unsupportedEmbeddedMetadata(file media.File) bool {
+	return application.writeEmbeddedMetadataEnabled() &&
+		file.Status == media.Ready &&
+		file.Path != "" &&
+		!unchanged(file) &&
+		!metadata.Supported(file.Path)
+}
+
+func isMetadataWriteFailure(file media.File) bool {
+	return file.Status == media.Ready && strings.HasPrefix(file.Message, metadataWriteFailedPrefix)
+}
+
+func (application *Application) statusText(file media.File) string {
+	if isMetadataWriteFailure(file) {
+		return metadataWriteFailedStatus
+	}
+	if application.unsupportedEmbeddedMetadata(file) {
+		return unsupportedMetadataStatus
+	}
+	return string(rowStatus(file))
+}
+
+func (application *Application) statusTip(file media.File) string {
+	if isMetadataWriteFailure(file) {
+		return file.Message
+	}
+	if application.unsupportedEmbeddedMetadata(file) {
+		return unsupportedMetadataTip
+	}
+	if rowStatus(file) == media.Metadata {
+		return metadataPendingTip
+	}
+	return ""
 }
 
 func (application *Application) addFile() {
@@ -885,6 +941,7 @@ func (application *Application) startMatch() {
 	go func() {
 		engine := matcher.New(application.tmdbClient(options.TMDBToken))
 		results := engine.Match(ctx, input, options)
+		application.markMetadataPending(results)
 		fyne.Do(func() {
 			application.cancel = nil
 			application.busy = false
@@ -972,6 +1029,7 @@ func (application *Application) reviewSelected() {
 		go func() {
 			engine := matcher.New(application.tmdbClient(options.TMDBToken))
 			resolved := engine.ResolveGroup(reviewCtx, input, indices, selectedCandidate, options)
+			application.markMetadataPending(resolved)
 			fyne.Do(func() {
 				if reviewCtx.Err() != nil {
 					return
@@ -1163,7 +1221,7 @@ func (application *Application) confirmRename() {
 	if !application.canRename() {
 		return
 	}
-	count := len(application.renameOperations())
+	count := application.renameCandidateCount()
 	apply := func() { application.applyRename() }
 	if application.settings.Load().ConfirmRename {
 		dialog.ShowConfirm(
@@ -1183,24 +1241,78 @@ func (application *Application) confirmRename() {
 
 func (application *Application) applyRename() {
 	operations := application.renameOperations()
+	if len(operations) == 0 {
+		application.setStatus("No selected files are ready to rename.")
+		application.refresh()
+		return
+	}
+	pendingMetadata := application.metadataBeforeRename(operations)
 	application.busy = true
 	application.setStatus("Renaming files…")
 	application.updateButtons()
 	go func() {
 		err := application.renamer.Apply(operations)
+		metadataFailures := map[string]error(nil)
+		var writeErrors []error
+		if err == nil {
+			metadataFailures, writeErrors = applyEmbeddedMetadataAfterRename(
+				application.metadataWriter.WriteInPlace,
+				operations,
+				pendingMetadata,
+			)
+		}
 		fyne.Do(func() {
 			application.busy = false
 			if err != nil {
 				dialog.ShowError(err, application.window)
+				for index := range application.files {
+					if strings.Contains(err.Error(), application.files[index].Path) {
+						application.files[index].Status = media.Error
+						application.files[index].Message = err.Error()
+					}
+				}
 				application.setStatus("Rename failed; FileGot attempted to restore original names.")
 			} else {
-				application.files = remainingAfterRename(application.files, operations)
+				application.files = filesAfterSuccessfulRename(application.files, operations, metadataFailures)
 				application.clearSelection()
-				application.setStatus(fmt.Sprintf("Renamed %d file(s). Undo Last is available.", len(operations)))
+				status := fmt.Sprintf("Renamed %d file(s). Undo Last is available.", len(operations))
+				if len(writeErrors) > 0 {
+					dialog.ShowError(errors.Join(writeErrors...), application.window)
+					status = fmt.Sprintf(
+						"Renamed %d file(s); metadata writing had errors. Undo Last restores names only.",
+						len(operations),
+					)
+				} else if len(pendingMetadata) > 0 {
+					status = fmt.Sprintf(
+						"Renamed %d file(s) and wrote metadata. Undo Last restores names only.",
+						len(operations),
+					)
+				}
+				application.setStatus(status)
 			}
 			application.refresh()
 		})
 	}()
+}
+
+func applyEmbeddedMetadataAfterRename(
+	write func(path string, values metadata.Values) error,
+	operations []rename.Operation,
+	pending map[string]metadata.Values,
+) (map[string]error, []error) {
+	failures := make(map[string]error)
+	var writeErrors []error
+	for _, operation := range operations {
+		values, ok := pending[operation.From]
+		if !ok {
+			continue
+		}
+		if err := write(operation.To, values); err != nil {
+			failures[operation.From] = err
+			writeErrors = append(writeErrors, fmt.Errorf("%s: %w", operation.To, err))
+		}
+	}
+	return failures, writeErrors
 }
 
 func (application *Application) renameOperations() []rename.Operation {
@@ -1217,16 +1329,199 @@ func (application *Application) renameOperations() []rename.Operation {
 	return operations
 }
 
-func remainingAfterRename(files []media.File, operations []rename.Operation) []media.File {
-	renamed := make(map[string]bool, len(operations))
+func (application *Application) metadataBeforeRename(operations []rename.Operation) map[string]metadata.Values {
+	options := settings.Defaults()
+	if application.settings != nil {
+		options = application.settings.Load()
+	}
+	if !options.WriteEmbeddedMetadata {
+		return nil
+	}
+	fields := application.embeddedMetadataFields()
+	pending := make(map[string]metadata.Values)
 	for _, operation := range operations {
-		renamed[operation.From] = true
+		if !metadata.Supported(operation.From) {
+			continue
+		}
+		for _, file := range application.files {
+			if pathKey(file.Path) != pathKey(operation.From) {
+				continue
+			}
+			pending[operation.From] = embeddedMetadata(file, fields)
+			break
+		}
+	}
+	return pending
+}
+
+func embeddedMetadata(file media.File, fields metadata.WriteFields) metadata.Values {
+	candidate := file.Candidate
+	values := metadata.Values{
+		Title: candidate.Title, OriginalTitle: candidate.OriginalTitle,
+		Date: embeddedMetadataDate(candidate), TMDBID: candidate.ID, Overview: candidate.Overview,
+		Genre: candidate.Genre, LawRating: candidate.LawRating,
+		Directors: append([]string(nil), candidate.Directors...),
+		Writers:   append([]string(nil), candidate.Writers...),
+		Actors:    append([]string(nil), candidate.Actors...),
+	}
+	if candidate.Kind == media.Episode {
+		values.Title = candidate.EpisodeTitle
+		values.OriginalTitle = candidate.OriginalEpisodeTitle
+		values.Series = candidate.Title
+		values.Season = candidate.Season
+		values.Episode = candidate.Episode
+		values.TMDBID = candidate.EpisodeTMDBID
+		values.IsEpisode = true
+	}
+	return values.Filtered(fields)
+}
+
+func embeddedMetadataDate(candidate media.Candidate) string {
+	if candidate.Kind == media.Episode {
+		if candidate.AirDate != "" {
+			return candidate.AirDate
+		}
+		if candidate.SeriesYear != 0 {
+			return strconv.Itoa(candidate.SeriesYear)
+		}
+		if candidate.Year != 0 {
+			return strconv.Itoa(candidate.Year)
+		}
+		return ""
+	}
+	if candidate.ReleaseDate != "" {
+		return candidate.ReleaseDate
+	}
+	if candidate.Year != 0 {
+		return strconv.Itoa(candidate.Year)
+	}
+	return ""
+}
+
+func (application *Application) embeddedMetadataFields() metadata.WriteFields {
+	if application.settings == nil {
+		return metadata.AllWriteFields()
+	}
+	return application.settings.Load().EmbeddedMetadataFields
+}
+
+func (application *Application) markMetadataPending(files []media.File) {
+	if !application.writeEmbeddedMetadataEnabled() {
+		for index := range files {
+			files[index].MetadataPending = false
+		}
+		return
+	}
+	for index := range files {
+		file := &files[index]
+		if file.Path == "" || file.Status != media.Ready || !metadata.Supported(file.Path) {
+			continue
+		}
+		differs, err := application.metadataWriter.Differs(
+			file.Path, embeddedMetadata(*file, application.embeddedMetadataFields()),
+		)
+		file.MetadataPending = differs || err != nil
+	}
+}
+
+func (application *Application) metadataFiles() []media.File {
+	var files []media.File
+	for index, file := range application.files {
+		if len(application.selectedRows) > 0 && !application.selectedRows[index] {
+			continue
+		}
+		if file.Path == "" || file.Status != media.Ready || file.Candidate.ID == 0 || !metadata.Supported(file.Path) {
+			continue
+		}
+		files = append(files, file)
+	}
+	return files
+}
+
+func (application *Application) writeMetadata() {
+	files := application.metadataFiles()
+	if application.busy || len(files) == 0 {
+		return
+	}
+	fields := application.embeddedMetadataFields()
+	application.busy = true
+	application.setStatus("Writing embedded metadata…")
+	application.updateButtons()
+	go func() {
+		var writeErrors []error
+		written := make(map[string]bool, len(files))
+		failed := make(map[string]error, len(files))
+		for _, file := range files {
+			values := embeddedMetadata(file, fields)
+			if err := application.metadataWriter.WriteInPlace(file.Path, values); err != nil {
+				writeErrors = append(writeErrors, fmt.Errorf("%s: %w", file.Path, err))
+				failed[pathKey(file.Path)] = err
+			} else {
+				written[pathKey(file.Path)] = true
+			}
+		}
+		err := errors.Join(writeErrors...)
+		fyne.Do(func() {
+			application.busy = false
+			if err != nil {
+				dialog.ShowError(err, application.window)
+				application.setStatus("Metadata writing completed with errors.")
+			} else {
+				application.setStatus(fmt.Sprintf("Wrote metadata to %d file(s).", len(written)))
+			}
+			applyMetadataWriteResults(application.files, written, failed)
+			application.refresh()
+		})
+	}()
+}
+
+func applyMetadataWriteResults(files []media.File, written map[string]bool, failed map[string]error) {
+	for index := range files {
+		key := pathKey(files[index].Path)
+		if written[key] {
+			files[index].MetadataPending = false
+			if isMetadataWriteFailure(files[index]) {
+				files[index].Message = ""
+			}
+			continue
+		}
+		if failure, ok := failed[key]; ok {
+			files[index].Message = fmt.Sprintf("%s: %v", metadataWriteFailedPrefix, failure)
+			files[index].MetadataPending = true
+		}
+	}
+}
+
+func remainingAfterRename(files []media.File, operations []rename.Operation) []media.File {
+	return filesAfterSuccessfulRename(files, operations, nil)
+}
+
+func filesAfterSuccessfulRename(
+	files []media.File,
+	operations []rename.Operation,
+	metadataFailures map[string]error,
+) []media.File {
+	renamedTo := make(map[string]string, len(operations))
+	for _, operation := range operations {
+		renamedTo[operation.From] = operation.To
 	}
 	remaining := make([]media.File, 0, len(files))
 	for _, file := range files {
-		if !renamed[file.Path] {
+		destination, renamed := renamedTo[file.Path]
+		if !renamed {
 			remaining = append(remaining, file)
+			continue
 		}
+		failure, failed := metadataFailures[file.Path]
+		if !failed {
+			continue
+		}
+		file.Path = destination
+		file.Proposed = filepath.Base(destination)
+		file.Status = media.Ready
+		file.Message = fmt.Sprintf("%s: %v", metadataWriteFailedPrefix, failure)
+		file.MetadataPending = true
+		remaining = append(remaining, file)
 	}
 	return remaining
 }
@@ -1300,7 +1595,23 @@ func (application *Application) undo() {
 }
 
 func (application *Application) canRename() bool {
-	return !application.busy && len(application.renameOperations()) > 0
+	if application.busy {
+		return false
+	}
+	return application.renameCandidateCount() > 0
+}
+
+func (application *Application) renameCandidateCount() int {
+	count := 0
+	for index, file := range application.files {
+		if len(application.selectedRows) > 0 && !application.selectedRows[index] {
+			continue
+		}
+		if file.Path != "" && file.Status == media.Ready && !unchanged(file) {
+			count++
+		}
+	}
+	return count
 }
 
 func (application *Application) refresh() {
@@ -1317,6 +1628,7 @@ func (application *Application) updateButtons() {
 	setEnabled(application.reviewButton, application.canReview())
 	setEnabled(application.mediaDetailsButton, application.canShowMediaDetails())
 	setEnabled(application.renameButton, application.canRename())
+	setEnabled(application.metadataButton, !application.busy && len(application.metadataFiles()) > 0)
 	setEnabled(application.undoButton, !application.busy && application.renamer.HasUndo())
 
 	if application.busy && application.cancel != nil {
@@ -1417,14 +1729,16 @@ func (application *Application) canRemove() bool {
 	return !application.busy && application.selected >= 0 && application.selected < len(application.files)
 }
 
-func (application *Application) contextActions() (*fyne.MenuItem, *fyne.MenuItem, *fyne.MenuItem) {
+func (application *Application) contextActions() (*fyne.MenuItem, *fyne.MenuItem, *fyne.MenuItem, *fyne.MenuItem) {
 	renameItem := fyne.NewMenuItem("Rename", application.confirmRename)
 	renameItem.Disabled = !application.canRename()
+	metadataItem := fyne.NewMenuItem("Write Metadata", application.writeMetadata)
+	metadataItem.Disabled = application.busy || len(application.metadataFiles()) == 0
 	reviewItem := fyne.NewMenuItem("Review", application.reviewSelected)
 	reviewItem.Disabled = !application.canReview()
 	removeItem := fyne.NewMenuItem("Remove", application.removeSelected)
 	removeItem.Disabled = !application.canRemove()
-	return renameItem, reviewItem, removeItem
+	return renameItem, metadataItem, reviewItem, removeItem
 }
 
 func (application *Application) updateFileArea() {
@@ -1453,8 +1767,10 @@ func (application *Application) updateDetails() {
 			file.Candidate.Episode,
 		)
 	}
-	details += " — " + string(file.Status)
-	if file.Message != "" {
+	details += " — " + application.statusText(file)
+	if tip := application.statusTip(file); tip != "" {
+		details += " — " + tip
+	} else if file.Message != "" {
 		details += " — " + file.Message
 	}
 	application.details.SetText(details)
@@ -1486,6 +1802,9 @@ func matchSummary(files []media.File) string {
 	counts := make(map[media.Status]int)
 	for _, file := range files {
 		if unchanged(file) {
+			if file.MetadataPending {
+				counts[media.Ready]++
+			}
 			continue
 		}
 		counts[file.Status]++
@@ -1501,8 +1820,11 @@ func unchanged(file media.File) bool {
 }
 
 func rowStatus(file media.File) media.Status {
+	if unchanged(file) && file.MetadataPending {
+		return media.Metadata
+	}
 	if unchanged(file) {
-		return media.Unsupported
+		return media.SameName
 	}
 	return file.Status
 }
@@ -1514,7 +1836,7 @@ func sortMatchedFiles(files []media.File) {
 }
 
 func matchedFileRank(file media.File) int {
-	if unchanged(file) {
+	if unchanged(file) && !file.MetadataPending {
 		return 3
 	}
 	switch file.Status {
@@ -1640,6 +1962,11 @@ func statusRowColor(status media.Status, background color.Color) color.Color {
 			return color.NRGBA{R: 0x17, G: 0x3c, B: 0x2b, A: 0xff}
 		}
 		return color.NRGBA{R: 0xe9, G: 0xf7, B: 0xef, A: 0xff}
+	case media.Metadata:
+		if dark {
+			return color.NRGBA{R: 0x24, G: 0x31, B: 0x4f, A: 0xff}
+		}
+		return color.NRGBA{R: 0xe8, G: 0xed, B: 0xff, A: 0xff}
 	case media.Review, media.Unmatched:
 		if dark {
 			return color.NRGBA{R: 0x47, G: 0x38, B: 0x17, A: 0xff}
@@ -1650,7 +1977,7 @@ func statusRowColor(status media.Status, background color.Color) color.Color {
 			return color.NRGBA{R: 0x48, G: 0x24, B: 0x24, A: 0xff}
 		}
 		return color.NRGBA{R: 0xfc, G: 0xe8, B: 0xe6, A: 0xff}
-	case media.Unsupported:
+	case media.Unsupported, media.SameName:
 		if dark {
 			return color.NRGBA{R: 0x2d, G: 0x30, B: 0x35, A: 0xff}
 		}
@@ -1669,7 +1996,7 @@ type fileTable struct {
 	widget.Table
 	modifiers    fyne.KeyModifier
 	contextClick bool
-	menu         func() (*fyne.MenuItem, *fyne.MenuItem, *fyne.MenuItem)
+	menu         func() (*fyne.MenuItem, *fyne.MenuItem, *fyne.MenuItem, *fyne.MenuItem)
 }
 
 func newFileTable(
@@ -1710,9 +2037,9 @@ func (table *fileTable) TappedSecondary(event *fyne.PointEvent) {
 	if table.menu == nil {
 		return
 	}
-	renameItem, reviewItem, removeItem := table.menu()
+	renameItem, metadataItem, reviewItem, removeItem := table.menu()
 	widget.ShowPopUpMenuAtPosition(
-		fyne.NewMenu("", renameItem, reviewItem, fyne.NewMenuItemSeparator(), removeItem),
+		fyne.NewMenu("", renameItem, metadataItem, reviewItem, fyne.NewMenuItemSeparator(), removeItem),
 		fyne.CurrentApp().Driver().CanvasForObject(table),
 		event.AbsolutePosition,
 	)
@@ -1740,9 +2067,53 @@ func (layout *fileTableLayout) MinSize([]fyne.CanvasObject) fyne.Size {
 }
 
 func fileStatusColumnWidth() float32 {
-	status := widget.NewLabel(string(media.Unsupported))
+	status := widget.NewLabel(metadataWriteFailedStatus)
 	status.SizeName = theme.SizeNameCaptionText
 	header := widget.NewLabelWithStyle("Status", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	header.SizeName = theme.SizeNameCaptionText
 	return max(status.MinSize().Width, header.MinSize().Width) + theme.Padding()*2
+}
+
+type tipLabel struct {
+	widget.Label
+	tip   string
+	popup *widget.PopUp
+}
+
+func newTipLabel() *tipLabel {
+	label := &tipLabel{}
+	label.ExtendBaseWidget(label)
+	return label
+}
+
+func (label *tipLabel) SetTip(tip string) {
+	if tip != label.tip {
+		label.MouseOut()
+	}
+	label.tip = tip
+}
+
+func (label *tipLabel) MouseIn(event *desktop.MouseEvent) {
+	if label.tip == "" {
+		return
+	}
+	canvas := fyne.CurrentApp().Driver().CanvasForObject(label)
+	if canvas == nil {
+		return
+	}
+	label.MouseOut()
+	content := widget.NewLabel(label.tip)
+	content.Wrapping = fyne.TextWrapWord
+	label.popup = widget.NewPopUp(content, canvas)
+	label.popup.ShowAtPosition(event.AbsolutePosition.Add(fyne.NewPos(12, 12)))
+}
+
+func (label *tipLabel) MouseMoved(*desktop.MouseEvent) {}
+
+func (label *tipLabel) MouseOut() {
+	if label.popup == nil {
+		return
+	}
+	label.popup.Hide()
+	label.popup = nil
 }

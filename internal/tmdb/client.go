@@ -25,22 +25,46 @@ type Client struct {
 	requests   sync.Map
 }
 
+type Genre struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
 type Movie struct {
-	ID            int    `json:"id"`
-	Title         string `json:"title"`
-	OriginalTitle string `json:"original_title"`
-	ReleaseDate   string `json:"release_date"`
-	PosterPath    string `json:"poster_path"`
-	Overview      string `json:"overview"`
+	ID            int     `json:"id"`
+	Title         string  `json:"title"`
+	OriginalTitle string  `json:"original_title"`
+	ReleaseDate   string  `json:"release_date"`
+	PosterPath    string  `json:"poster_path"`
+	Overview      string  `json:"overview"`
+	Genres        []Genre `json:"genres"`
 }
 
 type Show struct {
-	ID           int    `json:"id"`
-	Name         string `json:"name"`
-	OriginalName string `json:"original_name"`
-	FirstAirDate string `json:"first_air_date"`
-	PosterPath   string `json:"poster_path"`
-	Overview     string `json:"overview"`
+	ID               int     `json:"id"`
+	Name             string  `json:"name"`
+	OriginalName     string  `json:"original_name"`
+	FirstAirDate     string  `json:"first_air_date"`
+	PosterPath       string  `json:"poster_path"`
+	Overview         string  `json:"overview"`
+	OriginalLanguage string  `json:"original_language"`
+	Genres           []Genre `json:"genres"`
+}
+
+type CastMember struct {
+	Name      string `json:"name"`
+	Order     int    `json:"order"`
+	Character string `json:"character"`
+}
+
+type CrewMember struct {
+	Name string `json:"name"`
+	Job  string `json:"job"`
+}
+
+type Credits struct {
+	Cast []CastMember `json:"cast"`
+	Crew []CrewMember `json:"crew"`
 }
 
 type Season struct {
@@ -56,6 +80,14 @@ type Episode struct {
 	OriginalName  string `json:"original_name"`
 	SeasonNumber  int    `json:"season_number"`
 	EpisodeNumber int    `json:"episode_number"`
+	AirDate       string `json:"air_date"`
+	Overview      string `json:"overview"`
+}
+
+type ReleaseDate struct {
+	Date          string `json:"release_date"`
+	Certification string `json:"certification"`
+	Type          int    `json:"type"`
 }
 
 type Error struct {
@@ -125,10 +157,65 @@ func (client *Client) MovieDetails(ctx context.Context, id int, language string)
 	return movie, err
 }
 
+func (client *Client) MovieReleaseDates(ctx context.Context, id int, country string) ([]ReleaseDate, error) {
+	var response struct {
+		Results []struct {
+			Country string        `json:"iso_3166_1"`
+			Dates   []ReleaseDate `json:"release_dates"`
+		} `json:"results"`
+	}
+	if err := client.get(ctx, fmt.Sprintf("/movie/%d/release_dates", id), nil, &response); err != nil {
+		return nil, err
+	}
+	for _, result := range response.Results {
+		if result.Country == country {
+			return result.Dates, nil
+		}
+	}
+	return nil, nil
+}
+
+func (client *Client) MovieCredits(ctx context.Context, id int) (Credits, error) {
+	var credits Credits
+	err := client.get(ctx, fmt.Sprintf("/movie/%d/credits", id), nil, &credits)
+	return credits, err
+}
+
 func (client *Client) ShowDetails(ctx context.Context, id int, language string) (Show, error) {
 	var show Show
 	err := client.get(ctx, fmt.Sprintf("/tv/%d", id), url.Values{"language": {language}}, &show)
 	return show, err
+}
+
+func (client *Client) ShowCredits(ctx context.Context, id int) (Credits, error) {
+	var credits Credits
+	err := client.get(ctx, fmt.Sprintf("/tv/%d/credits", id), nil, &credits)
+	return credits, err
+}
+
+func (client *Client) EpisodeCredits(ctx context.Context, seriesID, season, episode int) (Credits, error) {
+	var credits Credits
+	path := fmt.Sprintf("/tv/%d/season/%d/episode/%d/credits", seriesID, season, episode)
+	err := client.get(ctx, path, nil, &credits)
+	return credits, err
+}
+
+func (client *Client) ShowContentRatings(ctx context.Context, id int, country string) (string, error) {
+	var response struct {
+		Results []struct {
+			Country string `json:"iso_3166_1"`
+			Rating  string `json:"rating"`
+		} `json:"results"`
+	}
+	if err := client.get(ctx, fmt.Sprintf("/tv/%d/content_ratings", id), nil, &response); err != nil {
+		return "", err
+	}
+	for _, result := range response.Results {
+		if result.Country == country && result.Rating != "" {
+			return result.Rating, nil
+		}
+	}
+	return "", nil
 }
 
 func (client *Client) Find(
@@ -164,6 +251,17 @@ func (client *Client) SeasonEpisodes(ctx context.Context, seriesID, season int, 
 		return nil, err
 	}
 	return response.Episodes, nil
+}
+
+func (client *Client) EpisodeDetails(
+	ctx context.Context,
+	seriesID, season, episode int,
+	language string,
+) (Episode, error) {
+	var result Episode
+	path := fmt.Sprintf("/tv/%d/season/%d/episode/%d", seriesID, season, episode)
+	err := client.get(ctx, path, url.Values{"language": {language}}, &result)
+	return result, err
 }
 
 func (client *Client) Translations(ctx context.Context) ([]string, error) {

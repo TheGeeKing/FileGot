@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -217,5 +218,260 @@ func TestReviewGroupUsesParentHintAndKeepsPartialEpisodeFailure(t *testing.T) {
 	cancel()
 	if cancelled := engine.ResolveGroup(ctx, files, indices, media.Candidate{ID: 42, Kind: media.Episode}, options); cancelled[0].Status != "" {
 		t.Fatalf("cancelled group changed files: %#v", cancelled)
+	}
+}
+
+func TestResolveEmbeddedMetadataEnrichmentIsBestEffort(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/movie/1":
+			_, _ = writer.Write([]byte(`{"id":1,"title":"Movie","genres":[{"id":1,"name":"Action"}]}`))
+		case "/movie/1/release_dates":
+			_, _ = writer.Write([]byte(`{"results":[]}`))
+		case "/movie/1/credits":
+			http.Error(writer, `{"status_message":"credits unavailable"}`, http.StatusBadGateway)
+		case "/tv/2":
+			_, _ = writer.Write([]byte(`{"id":2,"name":"Series","genres":[{"id":2,"name":"Drama"}]}`))
+		case "/tv/2/content_ratings":
+			http.Error(writer, `{"status_message":"ratings unavailable"}`, http.StatusBadGateway)
+		case "/tv/2/credits":
+			http.Error(writer, `{"status_message":"show credits unavailable"}`, http.StatusBadGateway)
+		case "/tv/2/season/3":
+			_, _ = writer.Write([]byte(`{"episodes":[{
+				"id":24,"name":"Pilot","original_name":"",
+				"season_number":3,"episode_number":4,"air_date":"2025-01-06","overview":"Story"
+			}]}`))
+		case "/tv/2/season/3/episode/4":
+			http.Error(writer, `{"status_message":"original title unavailable"}`, http.StatusBadGateway)
+		case "/tv/2/season/3/episode/4/credits":
+			http.Error(writer, `{"status_message":"episode credits unavailable"}`, http.StatusBadGateway)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	options.WriteEmbeddedMetadata = true
+	options.Language = "fr-FR"
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+
+	movie := engine.Resolve(context.Background(), media.File{
+		Path: "movie.mkv", Parsed: media.Parsed{Kind: media.Movie},
+	}, media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Movie", ReleaseDate: "2024-05-01", OriginalLanguage: "en",
+	}, options)
+	if movie.Status != media.Ready || movie.Proposed == "" {
+		t.Fatalf("movie should stay ready when credits fail: %#v", movie)
+	}
+	if movie.Candidate.Genre != "Action" || len(movie.Candidate.Directors) != 0 {
+		t.Fatalf("movie should keep genre and skip failed credits: %#v", movie.Candidate)
+	}
+
+	episode := engine.Resolve(context.Background(), media.File{
+		Path: "episode.mkv", Parsed: media.Parsed{Kind: media.Episode, Season: 3, Episode: 4},
+	}, media.Candidate{
+		ID: 2, Kind: media.Episode, Title: "Series", OriginalLanguage: "en",
+	}, options)
+	if episode.Status != media.Ready || episode.Candidate.EpisodeTitle != "Pilot" {
+		t.Fatalf("episode should stay ready when enrich calls fail: %#v", episode)
+	}
+	if episode.Candidate.Genre != "Drama" || episode.Candidate.LawRating != "" ||
+		len(episode.Candidate.Directors) != 0 || len(episode.Candidate.Actors) != 0 ||
+		episode.Candidate.OriginalEpisodeTitle != "" {
+		t.Fatalf("episode should keep core fields and skip failed enrichments: %#v", episode.Candidate)
+	}
+}
+
+func TestResolveUsesOriginalNameForEpisodeOriginalTitle(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/tv/2":
+			_, _ = writer.Write([]byte(`{"id":2,"name":"Series","genres":[]}`))
+		case "/tv/2/content_ratings":
+			_, _ = writer.Write([]byte(`{"results":[]}`))
+		case "/tv/2/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[]}`))
+		case "/tv/2/season/1":
+			_, _ = writer.Write([]byte(`{"episodes":[{
+				"id":9,"name":"Localized","original_name":"",
+				"season_number":1,"episode_number":1,"air_date":"2020-01-01","overview":""
+			}]}`))
+		case "/tv/2/season/1/episode/1":
+			_, _ = writer.Write([]byte(`{
+				"id":9,"name":"Still Localized","original_name":"本当のタイトル",
+				"season_number":1,"episode_number":1
+			}`))
+		case "/tv/2/season/1/episode/1/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	options.WriteEmbeddedMetadata = true
+	options.Language = "en-US"
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	episode := engine.Resolve(context.Background(), media.File{
+		Path: "episode.mkv", Parsed: media.Parsed{Kind: media.Episode, Season: 1, Episode: 1},
+	}, media.Candidate{
+		ID: 2, Kind: media.Episode, Title: "Series", OriginalLanguage: "ja",
+	}, options)
+	if episode.Status != media.Ready {
+		t.Fatalf("status = %q message = %q", episode.Status, episode.Message)
+	}
+	if episode.Candidate.OriginalEpisodeTitle != "本当のタイトル" {
+		t.Fatalf("original title = %q, want original_name not localized name", episode.Candidate.OriginalEpisodeTitle)
+	}
+}
+
+func TestResolveLeavesEpisodeOriginalTitleEmptyWithoutOriginalName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/tv/2":
+			_, _ = writer.Write([]byte(`{"id":2,"name":"Series","genres":[]}`))
+		case "/tv/2/content_ratings":
+			_, _ = writer.Write([]byte(`{"results":[]}`))
+		case "/tv/2/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[]}`))
+		case "/tv/2/season/1":
+			_, _ = writer.Write([]byte(`{"episodes":[{
+				"id":9,"name":"Localized","original_name":"",
+				"season_number":1,"episode_number":1,"air_date":"2020-01-01","overview":""
+			}]}`))
+		case "/tv/2/season/1/episode/1":
+			_, _ = writer.Write([]byte(`{
+				"id":9,"name":"Still Localized","original_name":"",
+				"season_number":1,"episode_number":1
+			}`))
+		case "/tv/2/season/1/episode/1/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	options.WriteEmbeddedMetadata = true
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	episode := engine.Resolve(context.Background(), media.File{
+		Path: "episode.mkv", Parsed: media.Parsed{Kind: media.Episode, Season: 1, Episode: 1},
+	}, media.Candidate{
+		ID: 2, Kind: media.Episode, Title: "Series", OriginalLanguage: "ja",
+	}, options)
+	if episode.Candidate.OriginalEpisodeTitle != "" {
+		t.Fatalf("original title = %q, want empty when original_name missing", episode.Candidate.OriginalEpisodeTitle)
+	}
+}
+
+func TestResolveMovieEnrichPrefersTheatricalDateWithoutChangingYear(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/movie/1":
+			_, _ = writer.Write([]byte(`{"id":1,"title":"Dune","genres":[{"id":1,"name":"Sci-Fi"}]}`))
+		case "/movie/1/release_dates":
+			_, _ = writer.Write([]byte(`{"results":[{
+				"iso_3166_1":"US","release_dates":[
+					{"release_date":"2023-12-15T00:00:00.000Z","type":1,"certification":""},
+					{"release_date":"2024-03-01T00:00:00.000Z","type":3,"certification":"PG-13"},
+					{"release_date":"2024-03-15T00:00:00.000Z","type":4,"certification":""}
+				]
+			}]}`))
+		case "/movie/1/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	options.WriteEmbeddedMetadata = true
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	movie := engine.Resolve(context.Background(), media.File{
+		Path: "dune.mkv", Parsed: media.Parsed{Kind: media.Movie},
+	}, media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Dune", Year: 2024, ReleaseDate: "2024-01-01",
+	}, options)
+	if movie.Status != media.Ready {
+		t.Fatalf("status = %q message = %q", movie.Status, movie.Message)
+	}
+	if movie.Candidate.Year != 2024 {
+		t.Fatalf("year = %d, enrich must not change naming year", movie.Candidate.Year)
+	}
+	if movie.Candidate.ReleaseDate != "2024-03-01" {
+		t.Fatalf("release date = %q, want theatrical primary", movie.Candidate.ReleaseDate)
+	}
+	if !strings.Contains(movie.Proposed, "2024") || strings.Contains(movie.Proposed, "2023") {
+		t.Fatalf("proposed name = %q, want naming year 2024", movie.Proposed)
+	}
+}
+
+func TestResolveLoadsEmbeddedMetadataDatesAndEpisodeDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/movie/1":
+			_, _ = writer.Write([]byte(`{"id":1,"title":"Movie","genres":[{"id":1,"name":"Action"}]}`))
+		case "/movie/1/release_dates":
+			_, _ = writer.Write([]byte(`{"results":[{
+				"iso_3166_1":"US","release_dates":[
+					{"release_date":"2024-03-02T00:00:00.000Z","type":3,"certification":"PG-13"},
+					{"release_date":"2024-02-01T00:00:00.000Z","type":1,"certification":"PG-13"}
+				]
+			}]}`))
+		case "/movie/1/credits":
+			_, _ = writer.Write([]byte(`{"cast":[{"name":"Actor One","order":0}],"crew":[
+				{"name":"Dir","job":"Director"},{"name":"Write","job":"Writer"}
+			]}`))
+		case "/tv/2":
+			_, _ = writer.Write([]byte(`{"id":2,"name":"Series","genres":[{"id":2,"name":"Drama"}]}`))
+		case "/tv/2/content_ratings":
+			_, _ = writer.Write([]byte(`{"results":[{"iso_3166_1":"US","rating":"TV-14"}]}`))
+		case "/tv/2/credits":
+			_, _ = writer.Write([]byte(`{"cast":[{"name":"Star","order":0}],"crew":[]}`))
+		case "/tv/2/season/3":
+			_, _ = writer.Write([]byte(`{"episodes":[{
+				"id":24,"name":"Localized episode","original_name":"Original episode",
+				"season_number":3,"episode_number":4,"air_date":"2025-01-06","overview":"Episode overview"
+			}]}`))
+		case "/tv/2/season/3/episode/4/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[{"name":"Ep Dir","job":"Director"}]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	options.WriteEmbeddedMetadata = true
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	movie := engine.Resolve(context.Background(), media.File{
+		Path: "movie.mkv", Parsed: media.Parsed{Kind: media.Movie},
+	}, media.Candidate{ID: 1, Kind: media.Movie, Title: "Movie", Year: 2024, ReleaseDate: "2024-05-01"}, options)
+	if movie.Status != media.Ready || movie.Candidate.ReleaseDate != "2024-03-02" ||
+		movie.Candidate.Year != 2024 ||
+		movie.Candidate.Genre != "Action" || movie.Candidate.LawRating != "PG-13" ||
+		len(movie.Candidate.Directors) != 1 || movie.Candidate.Directors[0] != "Dir" ||
+		len(movie.Candidate.Actors) != 1 || movie.Candidate.Actors[0] != "Actor One" {
+		t.Fatalf("movie metadata = %#v", movie.Candidate)
+	}
+	episode := engine.Resolve(context.Background(), media.File{
+		Path: "episode.mkv", Parsed: media.Parsed{Kind: media.Episode, Season: 3, Episode: 4},
+	}, media.Candidate{ID: 2, Kind: media.Episode, Title: "Series"}, options)
+	if episode.Status != media.Ready || episode.Candidate.AirDate != "2025-01-06" ||
+		episode.Candidate.Overview != "Episode overview" ||
+		episode.Candidate.OriginalEpisodeTitle != "Original episode" ||
+		episode.Candidate.Genre != "Drama" || episode.Candidate.LawRating != "TV-14" ||
+		len(episode.Candidate.Directors) != 1 || episode.Candidate.Directors[0] != "Ep Dir" ||
+		len(episode.Candidate.Actors) != 1 || episode.Candidate.Actors[0] != "Star" {
+		t.Fatalf("episode metadata = %#v", episode.Candidate)
 	}
 }

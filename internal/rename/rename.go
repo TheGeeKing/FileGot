@@ -141,7 +141,7 @@ func (manager *Manager) prepare(operations []Operation, mode string) (journal, e
 	for _, operation := range operations {
 		from, _ := filepath.Abs(operation.From)
 		to, _ := filepath.Abs(operation.To)
-		if samePath(from, to) && from == to {
+		if samePath(from, to) {
 			continue
 		}
 		temp, err := temporaryPath(filepath.Dir(from))

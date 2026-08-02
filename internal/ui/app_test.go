@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"image/color"
 	"math"
 	"net/http"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/TheGeeKing/FileGot/internal/matcher"
 	"github.com/TheGeeKing/FileGot/internal/media"
+	"github.com/TheGeeKing/FileGot/internal/metadata"
 	"github.com/TheGeeKing/FileGot/internal/rename"
 	"github.com/TheGeeKing/FileGot/internal/settings"
 	"github.com/TheGeeKing/FileGot/internal/tmdb"
@@ -124,15 +127,19 @@ func TestMainWindowPresentation(t *testing.T) {
 	application.table.Refresh()
 	widths := make(map[string]float32)
 	for _, object := range test.LaidOutObjects(application.table) {
-		if label, ok := object.(*widget.Label); ok {
+		switch label := object.(type) {
+		case *tipLabel:
+			widths[label.Text] = label.Size().Width
+		case *widget.Label:
 			widths[label.Text] = label.Size().Width
 		}
 	}
 	original, status, proposed := widths["Original File"], widths["Status"], widths["Proposed Name"]
-	statusLabel := widget.NewLabel(string(media.Unsupported))
+	statusLabel := widget.NewLabel(metadataWriteFailedStatus)
 	statusLabel.SizeName = theme.SizeNameCaptionText
-	if status > 140 || status < statusLabel.MinSize().Width+theme.Padding()*2 ||
-		math.Abs(float64(original-proposed)) > 1 || original+status+proposed > 700 {
+	minStatus := statusLabel.MinSize().Width + theme.Padding()*2
+	if status < minStatus || status > minStatus+40 ||
+		math.Abs(float64(original-proposed)) > 1 || original+status+proposed > 780 {
 		t.Fatalf("responsive column widths = %.1f / %.1f / %.1f", original, status, proposed)
 	}
 
@@ -280,7 +287,7 @@ func TestFileSelectionTransitions(t *testing.T) {
 func TestContextActionsFollowSelection(t *testing.T) {
 	application := &Application{
 		files: []media.File{
-			{Path: filepath.Join("media", "old.mkv"), Status: media.Ready, Proposed: "new.mkv"},
+			{Path: filepath.Join("media", "old.mkv"), Status: media.Ready, Proposed: "new.mkv", Candidate: media.Candidate{ID: 1}},
 			{Path: filepath.Join("media", "review.mkv"), Status: media.Review},
 		},
 		selected:        0,
@@ -288,18 +295,21 @@ func TestContextActionsFollowSelection(t *testing.T) {
 		selectedRows:    map[int]bool{0: true},
 	}
 
-	renameItem, reviewItem, removeItem := application.contextActions()
-	if renameItem.Disabled || reviewItem.Disabled || removeItem.Disabled {
-		t.Fatal("single ready row should expose Rename, Review, and Remove")
+	renameItem, metadataItem, reviewItem, removeItem := application.contextActions()
+	if renameItem.Disabled || metadataItem.Disabled || reviewItem.Disabled || removeItem.Disabled {
+		t.Fatal("single ready row should expose Rename, Write Metadata, Review, and Remove")
 	}
 
 	application.selectRow(1, fyne.KeyModifierControl)
-	renameItem, reviewItem, removeItem = application.contextActions()
+	renameItem, metadataItem, reviewItem, removeItem = application.contextActions()
 	if renameItem.Disabled {
 		t.Fatal("selection containing a ready row should expose Rename")
 	}
 	if !reviewItem.Disabled {
 		t.Fatal("Review should be unavailable for multiple rows")
+	}
+	if metadataItem.Disabled {
+		t.Fatal("Write Metadata should be available for the ready row")
 	}
 	if removeItem.Disabled {
 		t.Fatal("Remove should be available for multiple rows")
@@ -712,6 +722,315 @@ func TestRenameIgnoresAndRetainsUnpairedExpectedEpisodes(t *testing.T) {
 	}
 }
 
+func TestEmbeddedMetadataUsesMovieAndEpisodeFields(t *testing.T) {
+	fields := metadata.AllWriteFields()
+	movie := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Localized", OriginalTitle: "Original",
+		ReleaseDate: "2024-02-03", Overview: "Movie overview",
+		Genre: "Action", LawRating: "PG-13", Directors: []string{"Dir"}, Actors: []string{"Star"},
+	}}, fields)
+	if movie.Title != "Localized" || movie.OriginalTitle != "Original" ||
+		movie.Date != "2024-02-03" || movie.TMDBID != 1 || movie.Overview != "Movie overview" ||
+		movie.Genre != "Action" || movie.LawRating != "PG-13" ||
+		len(movie.Directors) != 1 || movie.Directors[0] != "Dir" {
+		t.Fatalf("movie metadata = %#v", movie)
+	}
+
+	episode := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 2, EpisodeTMDBID: 24, Kind: media.Episode, Title: "Series", EpisodeTitle: "Localized episode",
+		OriginalEpisodeTitle: "Original episode", AirDate: "2024-04-05",
+		Season: 3, Episode: 4, Overview: "Episode overview", Genre: "Drama",
+	}}, fields)
+	if episode.Title != "Localized episode" || episode.OriginalTitle != "Original episode" ||
+		episode.Date != "2024-04-05" || episode.Series != "Series" ||
+		episode.Season != 3 || episode.Episode != 4 || episode.TMDBID != 24 ||
+		episode.Genre != "Drama" || !episode.IsEpisode {
+		t.Fatalf("episode metadata = %#v", episode)
+	}
+
+	titleOnly := fields
+	titleOnly.OriginalTitle = false
+	titleOnly.Comment = false
+	titleOnly.DateReleased = false
+	titleOnly.Genre = false
+	titleOnly.LawRating = false
+	titleOnly.Directors = false
+	titleOnly.Writers = false
+	titleOnly.Actors = false
+	titleOnly.TMDBID = false
+	titleOnly.SeriesInfo = false
+	filtered := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Localized", OriginalTitle: "Original",
+		ReleaseDate: "2024-02-03", Overview: "Movie overview", Genre: "Action",
+	}}, titleOnly)
+	if filtered.Title != "Localized" || filtered.Overview != "" || filtered.Genre != "" ||
+		filtered.Date != "" || filtered.TMDBID != 0 {
+		t.Fatalf("title-only metadata = %#v", filtered)
+	}
+}
+
+func TestEmbeddedMetadataFallsBackToYearWhenDateMissing(t *testing.T) {
+	fields := metadata.AllWriteFields()
+	movie := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Movie", Year: 2024,
+	}}, fields)
+	if movie.Date != "2024" {
+		t.Fatalf("movie date fallback = %q, want 2024", movie.Date)
+	}
+
+	episode := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 2, EpisodeTMDBID: 9, Kind: media.Episode, Title: "Show",
+		EpisodeTitle: "Pilot", Season: 1, Episode: 1, SeriesYear: 2013,
+	}}, fields)
+	if episode.Date != "2013" {
+		t.Fatalf("episode date fallback = %q, want 2013", episode.Date)
+	}
+
+	withDate := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Movie", Year: 2024, ReleaseDate: "2024-06-01",
+	}}, fields)
+	if withDate.Date != "2024-06-01" {
+		t.Fatalf("full date should win over year: %q", withDate.Date)
+	}
+}
+
+func TestSameNameFileCanWritePendingMetadata(t *testing.T) {
+	application := &Application{
+		files: []media.File{{
+			Path: "same.mkv", Proposed: "same.mkv", Status: media.Ready,
+			Candidate:       media.Candidate{ID: 1, Kind: media.Movie, Title: "Movie"},
+			MetadataPending: true,
+		}},
+		selectedRows: map[int]bool{0: true},
+	}
+	files := application.metadataFiles()
+	if len(files) != 1 || files[0].Path != "same.mkv" {
+		t.Fatalf("metadata files = %#v", files)
+	}
+	if rowStatus(application.files[0]) != media.Metadata {
+		t.Fatalf("row status = %q", rowStatus(application.files[0]))
+	}
+	if tip := application.statusTip(application.files[0]); tip != metadataPendingTip {
+		t.Fatalf("metadata pending tip = %q", tip)
+	}
+	application.files[0].MetadataPending = false
+	if rowStatus(application.files[0]) != media.SameName {
+		t.Fatalf("written same-name row status = %q", rowStatus(application.files[0]))
+	}
+	if tip := application.statusTip(application.files[0]); tip != "" {
+		t.Fatalf("same-name tip = %q", tip)
+	}
+}
+
+func TestRenameOperationsQueueMetadataForSupportedContainers(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	options.WriteEmbeddedMetadata = true
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{
+		Path: `C:\media\Show.S01E01.mkv`, Proposed: "Show - S01E01 - Pilot.mkv", Status: media.Ready,
+		Candidate: media.Candidate{ID: 1, Kind: media.Episode, Title: "Show", EpisodeTitle: "Pilot", Season: 1, Episode: 1},
+	}, {
+		Path: `C:\media\Movie.2024.mp4`, Proposed: "Movie (2024).mp4", Status: media.Ready,
+		Candidate: media.Candidate{ID: 2, Kind: media.Movie, Title: "Movie", ReleaseDate: "2024-01-01"},
+	}}
+	application.selectedRows = map[int]bool{0: true, 1: true}
+	operations := application.renameOperations()
+	if len(operations) != 2 {
+		t.Fatalf("operations = %#v", operations)
+	}
+	pending := application.metadataBeforeRename(operations)
+	if len(pending) != 2 {
+		t.Fatalf("pending metadata should cover both MKV and MP4: %#v", pending)
+	}
+}
+
+func TestMarkMetadataPendingRespectsSetting(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	options.WriteEmbeddedMetadata = false
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	files := []media.File{{
+		Path: "movie.mkv", Status: media.Ready, Proposed: "Movie.mkv",
+		Candidate: media.Candidate{ID: 1, Kind: media.Movie, Title: "Movie"}, MetadataPending: true,
+	}}
+	application.markMetadataPending(files)
+	if files[0].MetadataPending {
+		t.Fatal("MetadataPending should clear when embedded metadata is disabled")
+	}
+}
+
+func TestMarkMetadataPendingOnProbeError(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	options.WriteEmbeddedMetadata = true
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	files := []media.File{{
+		Path: filepath.Join(t.TempDir(), "missing.mkv"), Status: media.Ready, Proposed: "Movie.mkv",
+		Candidate: media.Candidate{ID: 1, Kind: media.Movie, Title: "Movie"},
+	}}
+	application.markMetadataPending(files)
+	if !files[0].MetadataPending {
+		t.Fatal("probe failure should keep MetadataPending true")
+	}
+}
+
+func TestApplyEmbeddedMetadataAfterRenameWritesDestination(t *testing.T) {
+	var wrote []string
+	operations := []rename.Operation{
+		{From: "old.mkv", To: "new.mkv"},
+		{From: "skip.mkv", To: "skipped.mkv"},
+	}
+	pending := map[string]metadata.Values{
+		"old.mkv": {Title: "New"},
+	}
+	failures, errs := applyEmbeddedMetadataAfterRename(
+		func(path string, values metadata.Values) error {
+			wrote = append(wrote, path)
+			if values.Title != "New" {
+				t.Fatalf("values = %#v", values)
+			}
+			return errors.New("write failed")
+		},
+		operations,
+		pending,
+	)
+	if len(wrote) != 1 || wrote[0] != "new.mkv" {
+		t.Fatalf("wrote = %#v, want destination path", wrote)
+	}
+	if failures["old.mkv"] == nil || len(errs) != 1 {
+		t.Fatalf("failures = %#v errs = %#v", failures, errs)
+	}
+}
+
+func TestFilesAfterSuccessfulRenameKeepMetadataWriteFailures(t *testing.T) {
+	files := []media.File{
+		{Path: "old-a.mkv", Proposed: "new-a.mkv", Status: media.Ready},
+		{Path: "old-b.mkv", Proposed: "new-b.mkv", Status: media.Ready},
+		{Path: "keep.mkv", Proposed: "keep.mkv", Status: media.Review},
+	}
+	operations := []rename.Operation{
+		{From: "old-a.mkv", To: filepath.Join("media", "new-a.mkv")},
+		{From: "old-b.mkv", To: filepath.Join("media", "new-b.mkv")},
+	}
+	failures := map[string]error{"old-a.mkv": errors.New("mkvpropedit failed")}
+
+	remaining := filesAfterSuccessfulRename(files, operations, failures)
+	if len(remaining) != 2 {
+		t.Fatalf("remaining = %#v", remaining)
+	}
+	if remaining[0].Path != operations[0].To || remaining[0].Proposed != "new-a.mkv" {
+		t.Fatalf("failed metadata row = %#v", remaining[0])
+	}
+	if remaining[0].Status != media.Ready || !isMetadataWriteFailure(remaining[0]) {
+		t.Fatalf("failed metadata status/message = %q / %q", remaining[0].Status, remaining[0].Message)
+	}
+	if remaining[0].MetadataPending != true {
+		t.Fatal("failed metadata row should stay pending for Write Metadata retry")
+	}
+	if remaining[1].Path != "keep.mkv" {
+		t.Fatalf("unrenamed row = %#v", remaining[1])
+	}
+
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	application := New(app, settings.NewStore(app.Preferences()), rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	if got := application.statusText(remaining[0]); got != metadataWriteFailedStatus {
+		t.Fatalf("status text = %q", got)
+	}
+	if tip := application.statusTip(remaining[0]); tip != remaining[0].Message {
+		t.Fatalf("status tip = %q, want %q", tip, remaining[0].Message)
+	}
+}
+
+func TestApplyMetadataWriteResultsMarksFailuresPerRow(t *testing.T) {
+	files := []media.File{
+		{Path: "ok.mkv", Status: media.Ready, Message: metadataWriteFailedPrefix + ": old", MetadataPending: true},
+		{Path: "bad.mkv", Status: media.Ready, MetadataPending: false},
+		{Path: "other.mkv", Status: media.Ready, Message: "unrelated"},
+	}
+	applyMetadataWriteResults(
+		files,
+		map[string]bool{pathKey("ok.mkv"): true},
+		map[string]error{pathKey("bad.mkv"): errors.New("ffmpeg failed")},
+	)
+	if files[0].MetadataPending || files[0].Message != "" {
+		t.Fatalf("success should clear pending failure: %#v", files[0])
+	}
+	if !files[1].MetadataPending || !isMetadataWriteFailure(files[1]) {
+		t.Fatalf("failure row = %#v", files[1])
+	}
+	if files[2].Message != "unrelated" || files[2].MetadataPending {
+		t.Fatalf("untouched row = %#v", files[2])
+	}
+}
+
+func TestUnsupportedContainerKeepsReadyRenameWithStatusLabel(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	options.WriteEmbeddedMetadata = true
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{
+		{Path: "selected.avi", Status: media.Ready, Proposed: "selected-new.avi"},
+		{Path: "other.mkv", Status: media.Ready, Proposed: "other-new.mkv"},
+	}
+	application.selectedRows = map[int]bool{0: true}
+
+	if application.files[0].Status != media.Ready {
+		t.Fatalf("status = %q, want ready", application.files[0].Status)
+	}
+	if got := application.statusText(application.files[0]); got != "ready (unsupported metadata)" {
+		t.Fatalf("status text = %q", got)
+	}
+	if tip := application.statusTip(application.files[0]); tip == "" {
+		t.Fatal("expected status tip explaining unsupported metadata still allows rename")
+	}
+	if application.renameCandidateCount() != 1 {
+		t.Fatalf("rename candidates = %d, want 1", application.renameCandidateCount())
+	}
+	if ops := application.renameOperations(); len(ops) != 1 || ops[0].From != "selected.avi" {
+		t.Fatalf("rename operations = %#v", ops)
+	}
+	if pending := application.metadataBeforeRename(application.renameOperations()); len(pending) != 0 {
+		t.Fatalf("unsupported container must skip metadata write: %#v", pending)
+	}
+
+	options.WriteEmbeddedMetadata = false
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	if got := application.statusText(application.files[0]); got != string(media.Ready) {
+		t.Fatalf("status text with metadata off = %q", got)
+	}
+	if tip := application.statusTip(application.files[0]); tip != "" {
+		t.Fatalf("tip with metadata off = %q", tip)
+	}
+}
+
 func TestUnchangedFileIsNeutralAndSkipped(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)
@@ -729,7 +1048,7 @@ func TestUnchangedFileIsNeutralAndSkipped(t *testing.T) {
 	application.table.UpdateCell(widget.TableCellID{Row: 2, Col: 0}, cell)
 	background, _ := fileCellParts(cell)
 	neutral := statusRowColor(
-		media.Unsupported,
+		media.SameName,
 		theme.ColorForWidget(theme.ColorNameBackground, application.table),
 	)
 	if rgba(background.FillColor) != rgba(neutral) {
@@ -1070,7 +1389,14 @@ func expectedRows(files []media.File) (paired, unpaired int) {
 
 func fileCellParts(object fyne.CanvasObject) (*canvas.Rectangle, *widget.Label) {
 	objects := object.(*fyne.Container).Objects
-	return objects[0].(*canvas.Rectangle), objects[1].(*widget.Label)
+	switch label := objects[1].(type) {
+	case *tipLabel:
+		return objects[0].(*canvas.Rectangle), &label.Label
+	case *widget.Label:
+		return objects[0].(*canvas.Rectangle), label
+	default:
+		panic(fmt.Sprintf("unexpected file cell label type %T", objects[1]))
+	}
 }
 
 func findLabelWithText(object fyne.CanvasObject, text string) *widget.Label {
