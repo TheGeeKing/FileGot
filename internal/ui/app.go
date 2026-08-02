@@ -1251,15 +1251,16 @@ func (application *Application) applyRename() {
 	application.setStatus("Renaming files…")
 	application.updateButtons()
 	go func() {
-		metadataFailures := make(map[string]error)
-		var writeErrors []error
-		for path, values := range pendingMetadata {
-			if err := application.metadataWriter.WriteInPlace(path, values); err != nil {
-				metadataFailures[path] = err
-				writeErrors = append(writeErrors, fmt.Errorf("%s: %w", path, err))
-			}
-		}
 		err := application.renamer.Apply(operations)
+		metadataFailures := map[string]error(nil)
+		var writeErrors []error
+		if err == nil {
+			metadataFailures, writeErrors = applyEmbeddedMetadataAfterRename(
+				application.metadataWriter.WriteInPlace,
+				operations,
+				pendingMetadata,
+			)
+		}
 		fyne.Do(func() {
 			application.busy = false
 			if err != nil {
@@ -1292,6 +1293,26 @@ func (application *Application) applyRename() {
 			application.refresh()
 		})
 	}()
+}
+
+func applyEmbeddedMetadataAfterRename(
+	write func(path string, values metadata.Values) error,
+	operations []rename.Operation,
+	pending map[string]metadata.Values,
+) (map[string]error, []error) {
+	failures := make(map[string]error)
+	var writeErrors []error
+	for _, operation := range operations {
+		values, ok := pending[operation.From]
+		if !ok {
+			continue
+		}
+		if err := write(operation.To, values); err != nil {
+			failures[operation.From] = err
+			writeErrors = append(writeErrors, fmt.Errorf("%s: %w", operation.To, err))
+		}
+	}
+	return failures, writeErrors
 }
 
 func (application *Application) renameOperations() []rename.Operation {
@@ -1385,6 +1406,12 @@ func (application *Application) embeddedMetadataFields() metadata.WriteFields {
 }
 
 func (application *Application) markMetadataPending(files []media.File) {
+	if !application.writeEmbeddedMetadataEnabled() {
+		for index := range files {
+			files[index].MetadataPending = false
+		}
+		return
+	}
 	for index := range files {
 		file := &files[index]
 		if file.Path == "" || file.Status != media.Ready || !metadata.Supported(file.Path) {

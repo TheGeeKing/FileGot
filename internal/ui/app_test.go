@@ -851,6 +851,54 @@ func TestRenameOperationsQueueMetadataForSupportedContainers(t *testing.T) {
 	}
 }
 
+func TestMarkMetadataPendingRespectsSetting(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	options := settings.Defaults()
+	options.WriteEmbeddedMetadata = false
+	if err := store.Save(options); err != nil {
+		t.Fatal(err)
+	}
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	files := []media.File{{
+		Path: "movie.mkv", Status: media.Ready, Proposed: "Movie.mkv",
+		Candidate: media.Candidate{ID: 1, Kind: media.Movie, Title: "Movie"}, MetadataPending: true,
+	}}
+	application.markMetadataPending(files)
+	if files[0].MetadataPending {
+		t.Fatal("MetadataPending should clear when embedded metadata is disabled")
+	}
+}
+
+func TestApplyEmbeddedMetadataAfterRenameWritesDestination(t *testing.T) {
+	var wrote []string
+	operations := []rename.Operation{
+		{From: "old.mkv", To: "new.mkv"},
+		{From: "skip.mkv", To: "skipped.mkv"},
+	}
+	pending := map[string]metadata.Values{
+		"old.mkv": {Title: "New"},
+	}
+	failures, errs := applyEmbeddedMetadataAfterRename(
+		func(path string, values metadata.Values) error {
+			wrote = append(wrote, path)
+			if values.Title != "New" {
+				t.Fatalf("values = %#v", values)
+			}
+			return errors.New("write failed")
+		},
+		operations,
+		pending,
+	)
+	if len(wrote) != 1 || wrote[0] != "new.mkv" {
+		t.Fatalf("wrote = %#v, want destination path", wrote)
+	}
+	if failures["old.mkv"] == nil || len(errs) != 1 {
+		t.Fatalf("failures = %#v errs = %#v", failures, errs)
+	}
+}
+
 func TestFilesAfterSuccessfulRenameKeepMetadataWriteFailures(t *testing.T) {
 	files := []media.File{
 		{Path: "old-a.mkv", Proposed: "new-a.mkv", Status: media.Ready},
