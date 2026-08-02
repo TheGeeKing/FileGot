@@ -2087,10 +2087,10 @@ func newTipLabel() *tipLabel {
 }
 
 func (label *tipLabel) SetTip(tip string) {
-	label.tip = tip
-	if tip == "" {
+	if tip != label.tip {
 		label.MouseOut()
 	}
+	label.tip = tip
 }
 
 func (label *tipLabel) MouseIn(event *desktop.MouseEvent) {
