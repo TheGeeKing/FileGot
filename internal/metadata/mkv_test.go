@@ -32,6 +32,22 @@ func TestMKVDiffersDetectsSegmentTitleMismatch(t *testing.T) {
 	}
 }
 
+func TestExpectedMatroskaTagsIgnoresSeriesOnMovies(t *testing.T) {
+	got := expectedMatroskaTags(Values{Title: "Dune", Series: "ShouldNotMatter", Season: 1, Episode: 2})
+	if _, ok := got["70:TITLE"]; ok {
+		t.Fatalf("movie expectations = %#v, series level must stay episode-only", got)
+	}
+	if _, ok := got["60:PART_NUMBER"]; ok {
+		t.Fatalf("movie expectations = %#v, season must stay episode-only", got)
+	}
+	episode := expectedMatroskaTags(Values{
+		Title: "Pilot", Series: "Show", Season: 1, Episode: 2, IsEpisode: true,
+	})
+	if episode["70:TITLE"] != "Show" || episode["60:PART_NUMBER"] != "1" || episode["50:PART_NUMBER"] != "2" {
+		t.Fatalf("episode expectations = %#v", episode)
+	}
+}
+
 func TestMergeMatroskaTagsUsesSpecTargetsAndPreservesExistingTags(t *testing.T) {
 	tags := matroskaTags{Tags: []matroskaTag{{
 		Targets: matroskaTargets{TypeValue: 30},

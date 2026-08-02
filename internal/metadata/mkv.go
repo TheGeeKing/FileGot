@@ -204,11 +204,10 @@ func expectedMatroskaTags(values Values) map[string]string {
 		"50:LAW_RATING":     values.LawRating,
 		"50:TMDB_ID":        optionalInt(values.TMDBID),
 	}
-	if values.Series != "" {
-		expected["70:TITLE"] = values.Series
-		expected["60:PART_NUMBER"] = optionalInt(values.Season)
-		expected["50:PART_NUMBER"] = optionalInt(values.Episode)
-	} else if values.IsEpisode {
+	if values.IsEpisode {
+		if values.Series != "" {
+			expected["70:TITLE"] = values.Series
+		}
 		expected["60:PART_NUMBER"] = optionalInt(values.Season)
 		expected["50:PART_NUMBER"] = optionalInt(values.Episode)
 	}
