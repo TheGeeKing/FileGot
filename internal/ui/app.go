@@ -1450,10 +1450,12 @@ func (application *Application) writeMetadata() {
 	go func() {
 		var writeErrors []error
 		written := make(map[string]bool, len(files))
+		failed := make(map[string]error, len(files))
 		for _, file := range files {
 			values := embeddedMetadata(file, fields)
 			if err := application.metadataWriter.WriteInPlace(file.Path, values); err != nil {
 				writeErrors = append(writeErrors, fmt.Errorf("%s: %w", file.Path, err))
+				failed[pathKey(file.Path)] = err
 			} else {
 				written[pathKey(file.Path)] = true
 			}
@@ -1467,14 +1469,27 @@ func (application *Application) writeMetadata() {
 			} else {
 				application.setStatus(fmt.Sprintf("Wrote metadata to %d file(s).", len(written)))
 			}
-			for index := range application.files {
-				if written[pathKey(application.files[index].Path)] {
-					application.files[index].MetadataPending = false
-				}
-			}
+			applyMetadataWriteResults(application.files, written, failed)
 			application.refresh()
 		})
 	}()
+}
+
+func applyMetadataWriteResults(files []media.File, written map[string]bool, failed map[string]error) {
+	for index := range files {
+		key := pathKey(files[index].Path)
+		if written[key] {
+			files[index].MetadataPending = false
+			if isMetadataWriteFailure(files[index]) {
+				files[index].Message = ""
+			}
+			continue
+		}
+		if failure, ok := failed[key]; ok {
+			files[index].Message = fmt.Sprintf("%s: %v", metadataWriteFailedPrefix, failure)
+			files[index].MetadataPending = true
+		}
+	}
 }
 
 func remainingAfterRename(files []media.File, operations []rename.Operation) []media.File {

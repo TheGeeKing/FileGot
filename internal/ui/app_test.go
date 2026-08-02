@@ -961,6 +961,28 @@ func TestFilesAfterSuccessfulRenameKeepMetadataWriteFailures(t *testing.T) {
 	}
 }
 
+func TestApplyMetadataWriteResultsMarksFailuresPerRow(t *testing.T) {
+	files := []media.File{
+		{Path: "ok.mkv", Status: media.Ready, Message: metadataWriteFailedPrefix + ": old", MetadataPending: true},
+		{Path: "bad.mkv", Status: media.Ready, MetadataPending: false},
+		{Path: "other.mkv", Status: media.Ready, Message: "unrelated"},
+	}
+	applyMetadataWriteResults(
+		files,
+		map[string]bool{pathKey("ok.mkv"): true},
+		map[string]error{pathKey("bad.mkv"): errors.New("ffmpeg failed")},
+	)
+	if files[0].MetadataPending || files[0].Message != "" {
+		t.Fatalf("success should clear pending failure: %#v", files[0])
+	}
+	if !files[1].MetadataPending || !isMetadataWriteFailure(files[1]) {
+		t.Fatalf("failure row = %#v", files[1])
+	}
+	if files[2].Message != "unrelated" || files[2].MetadataPending {
+		t.Fatalf("untouched row = %#v", files[2])
+	}
+}
+
 func TestUnsupportedContainerKeepsReadyRenameWithStatusLabel(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)
