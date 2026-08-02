@@ -98,3 +98,16 @@ func TestRunToolTimesOutHungCommands(t *testing.T) {
 		t.Fatalf("err = %v, want deadline exceeded", err)
 	}
 }
+
+func TestToolTimeoutUsesRemuxBudgetForFFmpeg(t *testing.T) {
+	writer := &Writer{}
+	if got := writer.toolTimeout("ffmpeg"); got != defaultRemuxTimeout {
+		t.Fatalf("ffmpeg timeout = %v, want %v", got, defaultRemuxTimeout)
+	}
+	if got := writer.toolTimeout("ffprobe"); got != defaultProbeTimeout {
+		t.Fatalf("ffprobe timeout = %v, want %v", got, defaultProbeTimeout)
+	}
+	if got := writer.toolTimeout("mkvpropedit"); got != defaultProbeTimeout {
+		t.Fatalf("mkvpropedit timeout = %v, want %v", got, defaultProbeTimeout)
+	}
+}

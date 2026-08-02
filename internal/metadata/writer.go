@@ -94,26 +94,34 @@ func (values Values) Filtered(fields WriteFields) Values {
 
 type Writer struct {
 	run     func(ctx context.Context, name string, args ...string) ([]byte, error)
-	timeout time.Duration
+	timeout time.Duration // when set, overrides per-tool defaults (tests)
 }
 
-const defaultToolTimeout = 5 * time.Minute
+const (
+	defaultProbeTimeout = 10 * time.Second
+	defaultRemuxTimeout = 30 * time.Second
+)
 
 func NewWriter() *Writer {
 	return &Writer{
-		timeout: defaultToolTimeout,
 		run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			return exec.CommandContext(ctx, name, args...).CombinedOutput()
 		},
 	}
 }
 
-func (writer *Writer) runTool(name string, args ...string) ([]byte, error) {
-	timeout := writer.timeout
-	if timeout <= 0 {
-		timeout = defaultToolTimeout
+func (writer *Writer) toolTimeout(name string) time.Duration {
+	if writer.timeout > 0 {
+		return writer.timeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	if name == "ffmpeg" {
+		return defaultRemuxTimeout
+	}
+	return defaultProbeTimeout
+}
+
+func (writer *Writer) runTool(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), writer.toolTimeout(name))
 	defer cancel()
 	if writer.run == nil {
 		return exec.CommandContext(ctx, name, args...).CombinedOutput()
