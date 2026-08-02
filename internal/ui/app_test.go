@@ -769,6 +769,31 @@ func TestEmbeddedMetadataUsesMovieAndEpisodeFields(t *testing.T) {
 	}
 }
 
+func TestEmbeddedMetadataFallsBackToYearWhenDateMissing(t *testing.T) {
+	fields := metadata.AllWriteFields()
+	movie := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Movie", Year: 2024,
+	}}, fields)
+	if movie.Date != "2024" {
+		t.Fatalf("movie date fallback = %q, want 2024", movie.Date)
+	}
+
+	episode := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 2, EpisodeTMDBID: 9, Kind: media.Episode, Title: "Show",
+		EpisodeTitle: "Pilot", Season: 1, Episode: 1, SeriesYear: 2013,
+	}}, fields)
+	if episode.Date != "2013" {
+		t.Fatalf("episode date fallback = %q, want 2013", episode.Date)
+	}
+
+	withDate := embeddedMetadata(media.File{Candidate: media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Movie", Year: 2024, ReleaseDate: "2024-06-01",
+	}}, fields)
+	if withDate.Date != "2024-06-01" {
+		t.Fatalf("full date should win over year: %q", withDate.Date)
+	}
+}
+
 func TestSameNameFileCanWritePendingMetadata(t *testing.T) {
 	application := &Application{
 		files: []media.File{{

@@ -1333,7 +1333,7 @@ func embeddedMetadata(file media.File, fields metadata.WriteFields) metadata.Val
 	candidate := file.Candidate
 	values := metadata.Values{
 		Title: candidate.Title, OriginalTitle: candidate.OriginalTitle,
-		Date: candidate.ReleaseDate, TMDBID: candidate.ID, Overview: candidate.Overview,
+		Date: embeddedMetadataDate(candidate), TMDBID: candidate.ID, Overview: candidate.Overview,
 		Genre: candidate.Genre, LawRating: candidate.LawRating,
 		Directors: append([]string(nil), candidate.Directors...),
 		Writers:   append([]string(nil), candidate.Writers...),
@@ -1342,7 +1342,6 @@ func embeddedMetadata(file media.File, fields metadata.WriteFields) metadata.Val
 	if candidate.Kind == media.Episode {
 		values.Title = candidate.EpisodeTitle
 		values.OriginalTitle = candidate.OriginalEpisodeTitle
-		values.Date = candidate.AirDate
 		values.Series = candidate.Title
 		values.Season = candidate.Season
 		values.Episode = candidate.Episode
@@ -1350,6 +1349,28 @@ func embeddedMetadata(file media.File, fields metadata.WriteFields) metadata.Val
 		values.IsEpisode = true
 	}
 	return values.Filtered(fields)
+}
+
+func embeddedMetadataDate(candidate media.Candidate) string {
+	if candidate.Kind == media.Episode {
+		if candidate.AirDate != "" {
+			return candidate.AirDate
+		}
+		if candidate.SeriesYear != 0 {
+			return strconv.Itoa(candidate.SeriesYear)
+		}
+		if candidate.Year != 0 {
+			return strconv.Itoa(candidate.Year)
+		}
+		return ""
+	}
+	if candidate.ReleaseDate != "" {
+		return candidate.ReleaseDate
+	}
+	if candidate.Year != 0 {
+		return strconv.Itoa(candidate.Year)
+	}
+	return ""
 }
 
 func (application *Application) embeddedMetadataFields() metadata.WriteFields {
