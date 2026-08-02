@@ -810,9 +810,15 @@ func TestSameNameFileCanWritePendingMetadata(t *testing.T) {
 	if rowStatus(application.files[0]) != media.Metadata {
 		t.Fatalf("row status = %q", rowStatus(application.files[0]))
 	}
+	if tip := application.statusTip(application.files[0]); tip != metadataPendingTip {
+		t.Fatalf("metadata pending tip = %q", tip)
+	}
 	application.files[0].MetadataPending = false
 	if rowStatus(application.files[0]) != media.SameName {
 		t.Fatalf("written same-name row status = %q", rowStatus(application.files[0]))
+	}
+	if tip := application.statusTip(application.files[0]); tip != "" {
+		t.Fatalf("same-name tip = %q", tip)
 	}
 }
 

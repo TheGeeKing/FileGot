@@ -349,10 +349,11 @@ func (application *Application) fileColumnText(file media.File, column int) stri
 }
 
 const (
-	unsupportedMetadataStatus  = "ready (unsupported metadata)"
-	unsupportedMetadataTip     = "Embedded metadata writing is unsupported for this container, but rename still works."
-	metadataWriteFailedStatus  = "ready (metadata write failed)"
-	metadataWriteFailedPrefix  = "Embedded metadata could not be written"
+	unsupportedMetadataStatus = "ready (unsupported metadata)"
+	unsupportedMetadataTip    = "Embedded metadata writing is unsupported for this container, but rename still works."
+	metadataWriteFailedStatus = "ready (metadata write failed)"
+	metadataWriteFailedPrefix = "Embedded metadata could not be written"
+	metadataPendingTip        = "Filename already matches; use Write Metadata to update embedded fields."
 )
 
 func (application *Application) writeEmbeddedMetadataEnabled() bool {
@@ -387,6 +388,9 @@ func (application *Application) statusTip(file media.File) string {
 	}
 	if application.unsupportedEmbeddedMetadata(file) {
 		return unsupportedMetadataTip
+	}
+	if rowStatus(file) == media.Metadata {
+		return metadataPendingTip
 	}
 	return ""
 }
