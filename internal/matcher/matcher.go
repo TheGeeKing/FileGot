@@ -423,28 +423,56 @@ func enrichMovieEmbedded(ctx context.Context, client *tmdb.Client, candidate *me
 		candidate.Genre = joinGenreNames(details.Genres)
 	}
 	if dates, err := client.MovieReleaseDates(ctx, candidate.ID, country); err == nil {
-		regional := ""
 		for _, release := range dates {
-			date := release.Date
-			if len(date) >= 10 {
-				date = date[:10]
-			}
-			if date != "" && (regional == "" || date < regional) {
-				regional = date
-			}
 			if candidate.LawRating == "" && release.Certification != "" {
 				candidate.LawRating = release.Certification
 			}
 		}
-		if regional != "" {
+		if regional := preferredMovieReleaseDate(dates); regional != "" {
 			candidate.ReleaseDate = regional
 		}
 	}
-	if year := dateYear(candidate.ReleaseDate); year > 0 {
-		candidate.Year = year
-	}
 	if credits, err := client.MovieCredits(ctx, candidate.ID); err == nil {
 		candidate.Directors, candidate.Writers, candidate.Actors = creditNames(credits, 5)
+	}
+}
+
+func preferredMovieReleaseDate(dates []tmdb.ReleaseDate) string {
+	bestDate := ""
+	bestRank := -1
+	for _, release := range dates {
+		date := release.Date
+		if len(date) >= 10 {
+			date = date[:10]
+		}
+		if date == "" {
+			continue
+		}
+		rank := movieReleaseDateRank(release.Type)
+		if bestDate == "" || rank > bestRank || (rank == bestRank && date < bestDate) {
+			bestDate = date
+			bestRank = rank
+		}
+	}
+	return bestDate
+}
+
+func movieReleaseDateRank(releaseType int) int {
+	switch releaseType {
+	case 3: // Theatrical
+		return 6
+	case 2: // Theatrical (limited)
+		return 5
+	case 4: // Digital
+		return 4
+	case 1: // Premiere
+		return 3
+	case 5: // Physical
+		return 2
+	case 6: // TV
+		return 1
+	default:
+		return 0
 	}
 }
 

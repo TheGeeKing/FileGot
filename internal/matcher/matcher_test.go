@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -369,6 +370,50 @@ func TestResolveLeavesEpisodeOriginalTitleEmptyWithoutOriginalName(t *testing.T)
 	}
 }
 
+func TestResolveMovieEnrichPrefersTheatricalDateWithoutChangingYear(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/movie/1":
+			_, _ = writer.Write([]byte(`{"id":1,"title":"Dune","genres":[{"id":1,"name":"Sci-Fi"}]}`))
+		case "/movie/1/release_dates":
+			_, _ = writer.Write([]byte(`{"results":[{
+				"iso_3166_1":"US","release_dates":[
+					{"release_date":"2023-12-15T00:00:00.000Z","type":1,"certification":""},
+					{"release_date":"2024-03-01T00:00:00.000Z","type":3,"certification":"PG-13"},
+					{"release_date":"2024-03-15T00:00:00.000Z","type":4,"certification":""}
+				]
+			}]}`))
+		case "/movie/1/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	options.WriteEmbeddedMetadata = true
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	movie := engine.Resolve(context.Background(), media.File{
+		Path: "dune.mkv", Parsed: media.Parsed{Kind: media.Movie},
+	}, media.Candidate{
+		ID: 1, Kind: media.Movie, Title: "Dune", Year: 2024, ReleaseDate: "2024-01-01",
+	}, options)
+	if movie.Status != media.Ready {
+		t.Fatalf("status = %q message = %q", movie.Status, movie.Message)
+	}
+	if movie.Candidate.Year != 2024 {
+		t.Fatalf("year = %d, enrich must not change naming year", movie.Candidate.Year)
+	}
+	if movie.Candidate.ReleaseDate != "2024-03-01" {
+		t.Fatalf("release date = %q, want theatrical primary", movie.Candidate.ReleaseDate)
+	}
+	if !strings.Contains(movie.Proposed, "2024") || strings.Contains(movie.Proposed, "2023") {
+		t.Fatalf("proposed name = %q, want naming year 2024", movie.Proposed)
+	}
+}
+
 func TestResolveLoadsEmbeddedMetadataDatesAndEpisodeDetails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -378,8 +423,8 @@ func TestResolveLoadsEmbeddedMetadataDatesAndEpisodeDetails(t *testing.T) {
 		case "/movie/1/release_dates":
 			_, _ = writer.Write([]byte(`{"results":[{
 				"iso_3166_1":"US","release_dates":[
-					{"release_date":"2024-03-02T00:00:00.000Z","certification":"PG-13"},
-					{"release_date":"2024-02-01T00:00:00.000Z","certification":"PG-13"}
+					{"release_date":"2024-03-02T00:00:00.000Z","type":3,"certification":"PG-13"},
+					{"release_date":"2024-02-01T00:00:00.000Z","type":1,"certification":"PG-13"}
 				]
 			}]}`))
 		case "/movie/1/credits":
@@ -410,8 +455,9 @@ func TestResolveLoadsEmbeddedMetadataDatesAndEpisodeDetails(t *testing.T) {
 	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
 	movie := engine.Resolve(context.Background(), media.File{
 		Path: "movie.mkv", Parsed: media.Parsed{Kind: media.Movie},
-	}, media.Candidate{ID: 1, Kind: media.Movie, Title: "Movie", ReleaseDate: "2024-05-01"}, options)
-	if movie.Status != media.Ready || movie.Candidate.ReleaseDate != "2024-02-01" ||
+	}, media.Candidate{ID: 1, Kind: media.Movie, Title: "Movie", Year: 2024, ReleaseDate: "2024-05-01"}, options)
+	if movie.Status != media.Ready || movie.Candidate.ReleaseDate != "2024-03-02" ||
+		movie.Candidate.Year != 2024 ||
 		movie.Candidate.Genre != "Action" || movie.Candidate.LawRating != "PG-13" ||
 		len(movie.Candidate.Directors) != 1 || movie.Candidate.Directors[0] != "Dir" ||
 		len(movie.Candidate.Actors) != 1 || movie.Candidate.Actors[0] != "Actor One" {
