@@ -380,8 +380,8 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 			original, err := matcher.client.EpisodeDetails(
 				ctx, candidate.ID, candidate.Season, candidate.Episode, candidate.OriginalLanguage,
 			)
-			if err == nil {
-				candidate.OriginalEpisodeTitle = original.Name
+			if err == nil && original.OriginalName != "" {
+				candidate.OriginalEpisodeTitle = original.OriginalName
 			}
 		}
 		if options.WriteEmbeddedMetadata {

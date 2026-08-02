@@ -283,6 +283,92 @@ func TestResolveEmbeddedMetadataEnrichmentIsBestEffort(t *testing.T) {
 	}
 }
 
+func TestResolveUsesOriginalNameForEpisodeOriginalTitle(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/tv/2":
+			_, _ = writer.Write([]byte(`{"id":2,"name":"Series","genres":[]}`))
+		case "/tv/2/content_ratings":
+			_, _ = writer.Write([]byte(`{"results":[]}`))
+		case "/tv/2/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[]}`))
+		case "/tv/2/season/1":
+			_, _ = writer.Write([]byte(`{"episodes":[{
+				"id":9,"name":"Localized","original_name":"",
+				"season_number":1,"episode_number":1,"air_date":"2020-01-01","overview":""
+			}]}`))
+		case "/tv/2/season/1/episode/1":
+			_, _ = writer.Write([]byte(`{
+				"id":9,"name":"Still Localized","original_name":"本当のタイトル",
+				"season_number":1,"episode_number":1
+			}`))
+		case "/tv/2/season/1/episode/1/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	options.WriteEmbeddedMetadata = true
+	options.Language = "en-US"
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	episode := engine.Resolve(context.Background(), media.File{
+		Path: "episode.mkv", Parsed: media.Parsed{Kind: media.Episode, Season: 1, Episode: 1},
+	}, media.Candidate{
+		ID: 2, Kind: media.Episode, Title: "Series", OriginalLanguage: "ja",
+	}, options)
+	if episode.Status != media.Ready {
+		t.Fatalf("status = %q message = %q", episode.Status, episode.Message)
+	}
+	if episode.Candidate.OriginalEpisodeTitle != "本当のタイトル" {
+		t.Fatalf("original title = %q, want original_name not localized name", episode.Candidate.OriginalEpisodeTitle)
+	}
+}
+
+func TestResolveLeavesEpisodeOriginalTitleEmptyWithoutOriginalName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/tv/2":
+			_, _ = writer.Write([]byte(`{"id":2,"name":"Series","genres":[]}`))
+		case "/tv/2/content_ratings":
+			_, _ = writer.Write([]byte(`{"results":[]}`))
+		case "/tv/2/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[]}`))
+		case "/tv/2/season/1":
+			_, _ = writer.Write([]byte(`{"episodes":[{
+				"id":9,"name":"Localized","original_name":"",
+				"season_number":1,"episode_number":1,"air_date":"2020-01-01","overview":""
+			}]}`))
+		case "/tv/2/season/1/episode/1":
+			_, _ = writer.Write([]byte(`{
+				"id":9,"name":"Still Localized","original_name":"",
+				"season_number":1,"episode_number":1
+			}`))
+		case "/tv/2/season/1/episode/1/credits":
+			_, _ = writer.Write([]byte(`{"cast":[],"crew":[]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	options.WriteEmbeddedMetadata = true
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	episode := engine.Resolve(context.Background(), media.File{
+		Path: "episode.mkv", Parsed: media.Parsed{Kind: media.Episode, Season: 1, Episode: 1},
+	}, media.Candidate{
+		ID: 2, Kind: media.Episode, Title: "Series", OriginalLanguage: "ja",
+	}, options)
+	if episode.Candidate.OriginalEpisodeTitle != "" {
+		t.Fatalf("original title = %q, want empty when original_name missing", episode.Candidate.OriginalEpisodeTitle)
+	}
+}
+
 func TestResolveLoadsEmbeddedMetadataDatesAndEpisodeDetails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
