@@ -82,6 +82,24 @@ func TestMergeMatroskaTagsStripsTrackUIDTags(t *testing.T) {
 	}
 }
 
+func TestMergeMatroskaTagsKeepsTrackUIDWhenWindowsFieldsAbsent(t *testing.T) {
+	tags := matroskaTags{Tags: []matroskaTag{{
+		Targets: matroskaTargets{TrackUID: 99},
+		Simple:  []matroskaSimple{{Name: "BPS", String: "1000"}},
+	}}}
+	mergeMatroskaTags(&tags, Values{Title: "Pilot", TMDBID: 42, IsEpisode: true, Series: "Show", Season: 1, Episode: 1})
+	found := false
+	for _, tag := range tags.Tags {
+		if tag.Targets.TrackUID == 99 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("TrackUID statistics should remain when Genre/Comment/Date are not written")
+	}
+}
+
 func TestMergeMatroskaTagsMovieUsesLevel50Only(t *testing.T) {
 	tags := matroskaTags{}
 	mergeMatroskaTags(&tags, Values{

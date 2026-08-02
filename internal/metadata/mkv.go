@@ -143,7 +143,9 @@ func (writer *Writer) mkvDiffers(path string, values Values) (bool, error) {
 func mergeMatroskaTags(tags *matroskaTags, values Values) {
 	// Windows Explorer's MKV property handler ignores GENRE/COMMENT/DATE_RELEASED
 	// when any TrackUID-targeted tags (usually mkvmerge statistics) remain.
-	stripTrackTargetedTags(tags)
+	if needsTrackUIDStrip(values) {
+		stripTrackTargetedTags(tags)
+	}
 	episode := values.IsEpisode
 	if episode {
 		upsertMatroska(tags, 70, "TITLE", values.Series, episode)
@@ -162,6 +164,10 @@ func mergeMatroskaTags(tags *matroskaTags, values Values) {
 	replaceMatroskaList(tags, 50, "DIRECTOR", values.Directors, episode)
 	replaceMatroskaList(tags, 50, "WRITTEN_BY", values.Writers, episode)
 	replaceMatroskaList(tags, 50, "ACTOR", values.Actors, episode)
+}
+
+func needsTrackUIDStrip(values Values) bool {
+	return values.Genre != "" || values.Overview != "" || values.Date != ""
 }
 
 func expectedMatroskaTags(values Values) map[string]string {
