@@ -1,9 +1,12 @@
 package metadata
 
 import (
+	"context"
+	"errors"
 	"os"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestWriteInPlaceMP4UsesFFmpegAndReplacesOriginal(t *testing.T) {
@@ -13,7 +16,7 @@ func TestWriteInPlaceMP4UsesFFmpegAndReplacesOriginal(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got []string
-	writer := &Writer{run: func(_ string, args ...string) ([]byte, error) {
+	writer := &Writer{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		got = append([]string(nil), args...)
 		return nil, os.WriteFile(args[len(args)-1], []byte("tagged"), 0o600)
 	}}
@@ -69,7 +72,7 @@ func TestValuesFilteredKeepsOnlySelectedFields(t *testing.T) {
 }
 
 func TestDiffersComparesRequestedMetadata(t *testing.T) {
-	writer := &Writer{run: func(_ string, _ ...string) ([]byte, error) {
+	writer := &Writer{run: func(context.Context, string, ...string) ([]byte, error) {
 		return []byte(`{"format":{"tags":{"TITLE":"Pilot","tmdb_id":"42"}}}`), nil
 	}}
 	different, err := writer.Differs("episode.mp4", Values{Title: "Pilot", TMDBID: 42})
@@ -79,5 +82,19 @@ func TestDiffersComparesRequestedMetadata(t *testing.T) {
 	different, err = writer.Differs("episode.mp4", Values{Title: "Another", TMDBID: 42})
 	if err != nil || !different {
 		t.Fatalf("changed metadata: different=%v err=%v", different, err)
+	}
+}
+
+func TestRunToolTimesOutHungCommands(t *testing.T) {
+	writer := &Writer{
+		timeout: 20 * time.Millisecond,
+		run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	_, err := writer.runTool("hung-tool")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want deadline exceeded", err)
 	}
 }

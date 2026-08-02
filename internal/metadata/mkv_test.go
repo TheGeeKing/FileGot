@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"os"
@@ -10,7 +11,7 @@ import (
 )
 
 func TestMKVDiffersDetectsSegmentTitleMismatch(t *testing.T) {
-	writer := &Writer{run: func(name string, args ...string) ([]byte, error) {
+	writer := &Writer{run: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		switch name {
 		case "mkvextract":
 			path := args[2]

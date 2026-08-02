@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Values struct {
@@ -91,13 +93,32 @@ func (values Values) Filtered(fields WriteFields) Values {
 }
 
 type Writer struct {
-	run func(name string, args ...string) ([]byte, error)
+	run     func(ctx context.Context, name string, args ...string) ([]byte, error)
+	timeout time.Duration
 }
 
+const defaultToolTimeout = 5 * time.Minute
+
 func NewWriter() *Writer {
-	return &Writer{run: func(name string, args ...string) ([]byte, error) {
-		return exec.Command(name, args...).CombinedOutput()
-	}}
+	return &Writer{
+		timeout: defaultToolTimeout,
+		run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, args...).CombinedOutput()
+		},
+	}
+}
+
+func (writer *Writer) runTool(name string, args ...string) ([]byte, error) {
+	timeout := writer.timeout
+	if timeout <= 0 {
+		timeout = defaultToolTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if writer.run == nil {
+		return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	}
+	return writer.run(ctx, name, args...)
 }
 
 func Supported(path string) bool {
@@ -114,7 +135,7 @@ func (writer *Writer) Differs(path string, values Values) (bool, error) {
 	if strings.EqualFold(filepath.Ext(path), ".mkv") {
 		return writer.mkvDiffers(path, values)
 	}
-	output, err := writer.run("ffprobe", "-v", "error", "-show_entries", "format_tags", "-of", "json", path)
+	output, err := writer.runTool("ffprobe", "-v", "error", "-show_entries", "format_tags", "-of", "json", path)
 	if err != nil {
 		return false, fmt.Errorf("ffprobe: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -158,7 +179,7 @@ func (writer *Writer) writeMP4InPlace(path string, values Values) error {
 		}
 	}
 	args = append(args, tmp)
-	if output, err := writer.run("ffmpeg", args...); err != nil {
+	if output, err := writer.runTool("ffmpeg", args...); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("ffmpeg: %w: %s", err, strings.TrimSpace(string(output)))
 	}

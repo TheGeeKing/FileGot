@@ -49,7 +49,7 @@ func (writer *Writer) WriteMKVInPlace(path string, values Values) error {
 	defer os.Remove(backupPath)
 
 	hadTags := true
-	if output, extractErr := writer.run("mkvextract", path, "tags", backupPath); extractErr != nil {
+	if output, extractErr := writer.runTool("mkvextract", path, "tags", backupPath); extractErr != nil {
 		return fmt.Errorf("mkvextract: %w: %s", extractErr, strings.TrimSpace(string(output)))
 	} else if _, statErr := os.Stat(backupPath); os.IsNotExist(statErr) {
 		hadTags = false
@@ -85,11 +85,11 @@ func (writer *Writer) WriteMKVInPlace(path string, values Values) error {
 		return closeErr
 	}
 
-	if output, editErr := writer.run("mkvpropedit", path, "--tags", "all:"+updatePath); editErr != nil {
+	if output, editErr := writer.runTool("mkvpropedit", path, "--tags", "all:"+updatePath); editErr != nil {
 		return writer.mkvpropeditFailure(path, backupPath, hadTags, "mkvpropedit", editErr, output)
 	}
 	if values.Title != "" {
-		if output, editErr := writer.run("mkvpropedit", path, "--edit", "info", "--set", "title="+values.Title); editErr != nil {
+		if output, editErr := writer.runTool("mkvpropedit", path, "--edit", "info", "--set", "title="+values.Title); editErr != nil {
 			return writer.mkvpropeditFailure(path, backupPath, hadTags, "mkvpropedit title", editErr, output)
 		}
 	}
@@ -103,7 +103,7 @@ func (writer *Writer) mkvpropeditFailure(
 	if hadTags {
 		restore += backupPath
 	}
-	restoreOutput, restoreErr := writer.run("mkvpropedit", path, "--tags", restore)
+	restoreOutput, restoreErr := writer.runTool("mkvpropedit", path, "--tags", restore)
 	return fmt.Errorf(
 		"%s: %w: %s; restore: %v: %s",
 		operation, editErr, strings.TrimSpace(string(output)), restoreErr, strings.TrimSpace(string(restoreOutput)),
@@ -119,7 +119,7 @@ func (writer *Writer) mkvDiffers(path string, values Values) (bool, error) {
 	_ = extracted.Close()
 	_ = os.Remove(extractedPath)
 	defer os.Remove(extractedPath)
-	if output, extractErr := writer.run("mkvextract", path, "tags", extractedPath); extractErr != nil {
+	if output, extractErr := writer.runTool("mkvextract", path, "tags", extractedPath); extractErr != nil {
 		return false, fmt.Errorf("mkvextract: %w: %s", extractErr, strings.TrimSpace(string(output)))
 	}
 	tags := matroskaTags{}
@@ -147,7 +147,7 @@ func (writer *Writer) mkvDiffers(path string, values Values) (bool, error) {
 }
 
 func (writer *Writer) mkvSegmentTitle(path string) (string, error) {
-	output, err := writer.run("mkvmerge", "-J", path)
+	output, err := writer.runTool("mkvmerge", "-J", path)
 	if err != nil {
 		return "", fmt.Errorf("mkvmerge identify: %w: %s", err, strings.TrimSpace(string(output)))
 	}
