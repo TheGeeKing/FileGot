@@ -1,0 +1,40 @@
+name: Release PR CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Release PR tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip non-release PR
+        if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
+        run: echo "This check only runs the suite for the Release Please PR."
+
+      - uses: actions/checkout@v7
+        if: ${{ startsWith(github.head_ref, 'release-please--branches--main') }}
+
+      - uses: actions/setup-go@v7
+        if: ${{ startsWith(github.head_ref, 'release-please--branches--main') }}
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Linux GUI build dependencies
+        if: ${{ startsWith(github.head_ref, 'release-please--branches--main') }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
+
+      - name: Vet
+        if: ${{ startsWith(github.head_ref, 'release-please--branches--main') }}
+        run: go vet ./...
+
+      - name: Test
+        if: ${{ startsWith(github.head_ref, 'release-please--branches--main') }}
+        run: go test ./...
