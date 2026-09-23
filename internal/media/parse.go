@@ -15,6 +15,8 @@ var (
 	multiEpisodePattern  = regexp.MustCompile(`(?i)\bs(\d{1,2})[\s._-]*e(\d{1,3})(?:[\s._-]*e\d{1,3})+`)
 	seasonEpisodePattern = regexp.MustCompile(`(?i)^(.*?)[\s._-]*s(\d{1,2})[\s._-]*e(\d{1,3})(?:\b|[\s._-])`)
 	xEpisodePattern      = regexp.MustCompile(`(?i)^(.*?)[\s._-]+(\d{1,2})x(\d{1,3})(?:\b|[\s._-])`)
+	showEpisodePattern   = regexp.MustCompile(`(?i)^(.*?)[\s._-]+e(\d{1,4})(?:$|[\s._-])`)
+	bareEpisodePattern   = regexp.MustCompile(`^0*([1-9]\d{0,2})$`)
 	yearPattern          = regexp.MustCompile(`(?:^|[\s._([{-])((?:19|20)\d{2})(?:$|[\s._)\]}-])`)
 	seasonFolderPattern  = regexp.MustCompile(`(?i)^(?:s(?:eason)?|saison)\s*\d+$`)
 	bracketPattern       = regexp.MustCompile(`[\[\{][^\]\}]*[\]\}]`)
@@ -83,6 +85,21 @@ func Parse(path string) Parsed {
 				Year:    year,
 				Season:  atoi(match[2]),
 				Episode: atoi(match[3]),
+			}
+		}
+	}
+
+	if match := showEpisodePattern.FindStringSubmatch(base); match != nil {
+		query, year := titleAndYear(match[1])
+		query, year = parentFallback(path, query, year)
+		return Parsed{Kind: Episode, Query: query, Year: year, ShowEpisode: atoi(match[2])}
+	}
+
+	if match := bareEpisodePattern.FindStringSubmatch(base); match != nil {
+		if hints := ParentHints(path); len(hints) > 0 {
+			return Parsed{
+				Kind: Episode, Query: hints[0].Query, Year: hints[0].Year,
+				ShowEpisode: atoi(match[1]),
 			}
 		}
 	}

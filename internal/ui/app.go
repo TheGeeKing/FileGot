@@ -33,6 +33,8 @@ import (
 )
 
 var leadingEpisodeNumberPattern = regexp.MustCompile(`^0*([1-9]\d{0,2})(?:[\s._-]+)`)
+var bareShowEpisodeNumberPattern = regexp.MustCompile(`^0*([1-9]\d{0,2})$`)
+var leadingShowEpisodeNumberPattern = regexp.MustCompile(`^(\d{3,4})(?:$|[\s._-]+)`)
 
 type Application struct {
 	app            fyne.App
@@ -573,6 +575,7 @@ func (application *Application) importShow() {
 		message.SetText("Loading episodes…")
 		go func(show tmdb.Show) {
 			episodes, err := loadShowEpisodes(ctx, client, show.ID, numbers, options.Language)
+			episodes = assignShowEpisodeNumbers(episodes, seasons)
 			fyne.Do(func() {
 				setRequestState(false)
 				if ctx.Err() != nil {
@@ -654,6 +657,7 @@ func (application *Application) addPaths(paths []string) {
 
 func (application *Application) importEpisodes(show tmdb.Show, episodes []tmdb.Episode) (int, error) {
 	options := application.settings.Load()
+	showEpisodes := showEpisodeOrdinals(episodes)
 	existing := make(map[string]struct{}, len(application.files))
 	for _, file := range application.files {
 		if file.Imported {
@@ -695,6 +699,10 @@ func (application *Application) importEpisodes(show tmdb.Show, episodes []tmdb.E
 			Parsed: media.Parsed{
 				Kind: media.Episode, Query: title, Year: candidate.SeriesYear,
 				Season: candidate.Season, Episode: candidate.Episode,
+				ShowEpisode: chooseShowEpisode(
+					episode.ShowEpisode,
+					showEpisodes[episodePositionKey(candidate.Season, candidate.Episode)],
+				),
 			},
 			Candidate: candidate, Proposed: proposed, Status: media.Expected,
 			Message: "waiting for a local file",
@@ -741,6 +749,44 @@ func (application *Application) reconcileExpectedEpisodes() {
 			continue
 		}
 
+		if application.applyEpisodePairing(localIndex, expectedIndex, options) {
+			localIndex--
+		}
+	}
+
+	for localIndex := 0; localIndex < len(application.files); localIndex++ {
+		local := application.files[localIndex]
+		showEpisode, found := showEpisodeNumber(local)
+		if local.Imported || local.Path == "" || local.Parsed.MultiEpisode || !found {
+			continue
+		}
+
+		expectedIndex := -1
+		for index, expected := range application.files {
+			if !expected.IsExpectedEpisode() || expected.Parsed.ShowEpisode != showEpisode {
+				continue
+			}
+			if expectedIndex >= 0 {
+				expectedIndex = -1
+				break
+			}
+			expectedIndex = index
+		}
+		if expectedIndex < 0 {
+			continue
+		}
+
+		matchingLocals := 0
+		for _, candidate := range application.files {
+			candidateEpisode, candidateFound := showEpisodeNumber(candidate)
+			if !candidate.Imported && !candidate.Parsed.MultiEpisode && candidateFound &&
+				candidateEpisode == showEpisode {
+				matchingLocals++
+			}
+		}
+		if matchingLocals != 1 {
+			continue
+		}
 		if application.applyEpisodePairing(localIndex, expectedIndex, options) {
 			localIndex--
 		}
@@ -829,6 +875,98 @@ func leadingEpisodeNumber(path string) (int, bool) {
 	}
 	episode, err := strconv.Atoi(match[1])
 	return episode, err == nil
+}
+
+func showEpisodeNumber(file media.File) (int, bool) {
+	if file.Parsed.ShowEpisode > 0 {
+		return file.Parsed.ShowEpisode, true
+	}
+	filename := strings.TrimSuffix(filepath.Base(file.Path), filepath.Ext(file.Path))
+	if match := leadingShowEpisodeNumberPattern.FindStringSubmatch(filename); match != nil {
+		episode, err := strconv.Atoi(match[1])
+		return episode, err == nil && episode > 0
+	}
+	match := bareShowEpisodeNumberPattern.FindStringSubmatch(filename)
+	if match == nil {
+		return 0, false
+	}
+	episode, err := strconv.Atoi(match[1])
+	return episode, err == nil
+}
+
+func chooseShowEpisode(explicit, inferred int) int {
+	if explicit > 0 {
+		return explicit
+	}
+	return inferred
+}
+
+func assignShowEpisodeNumbers(episodes []tmdb.Episode, seasons []tmdb.Season) []tmdb.Episode {
+	ordered := append([]tmdb.Season(nil), seasons...)
+	sort.Slice(ordered, func(left, right int) bool {
+		return ordered[left].SeasonNumber < ordered[right].SeasonNumber
+	})
+	offsets := make(map[int]int, len(ordered))
+	offset := 0
+	for _, season := range ordered {
+		if season.SeasonNumber <= 0 {
+			continue
+		}
+		if season.EpisodeCount <= 0 {
+			break
+		}
+		offsets[season.SeasonNumber] = offset
+		offset += season.EpisodeCount
+	}
+
+	result := append([]tmdb.Episode(nil), episodes...)
+	for index := range result {
+		offset, found := offsets[result[index].SeasonNumber]
+		if !found || result[index].EpisodeNumber <= 0 {
+			continue
+		}
+		result[index].ShowEpisode = offset + result[index].EpisodeNumber
+	}
+	return result
+}
+
+func showEpisodeOrdinals(episodes []tmdb.Episode) map[string]int {
+	regular := make([]tmdb.Episode, 0, len(episodes))
+	for _, episode := range episodes {
+		if episode.SeasonNumber > 0 && episode.EpisodeNumber > 0 {
+			regular = append(regular, episode)
+		}
+	}
+	sort.Slice(regular, func(left, right int) bool {
+		if regular[left].SeasonNumber != regular[right].SeasonNumber {
+			return regular[left].SeasonNumber < regular[right].SeasonNumber
+		}
+		return regular[left].EpisodeNumber < regular[right].EpisodeNumber
+	})
+	if len(regular) == 0 || regular[0].SeasonNumber != 1 || regular[0].EpisodeNumber != 1 {
+		return nil
+	}
+
+	ordinals := make(map[string]int, len(regular))
+	previousSeason := 1
+	previousEpisode := 0
+	for index, episode := range regular {
+		if episode.SeasonNumber == previousSeason {
+			if episode.EpisodeNumber != previousEpisode+1 {
+				return nil
+			}
+		} else if episode.SeasonNumber != previousSeason+1 || episode.EpisodeNumber != 1 {
+			return nil
+		}
+		ordinals[episodePositionKey(episode.SeasonNumber, episode.EpisodeNumber)] = index + 1
+		previousSeason = episode.SeasonNumber
+		previousEpisode = episode.EpisodeNumber
+	}
+	return ordinals
+}
+
+func episodePositionKey(season, episode int) string {
+	return fmt.Sprintf("%d/%d", season, episode)
 }
 
 func (application *Application) applyEpisodePairing(localIndex, expectedIndex int, options settings.Settings) bool {
@@ -960,6 +1098,8 @@ func pairEpisode(local, expected media.File, options settings.Settings) (media.F
 	expected.Path = local.Path
 	expected.Imported = true
 	expected.Parsed = local.Parsed
+	expected.Parsed.Season = expected.Candidate.Season
+	expected.Parsed.Episode = expected.Candidate.Episode
 	expected.Proposed = proposed
 	expected.Status = media.Ready
 	expected.Message = ""

@@ -544,6 +544,74 @@ func TestExpectedEpisodeImportPairsAndDeduplicates(t *testing.T) {
 	}
 }
 
+func TestExpectedEpisodeImportPairsShowWideNumbersToCanonicalPlacement(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		path string
+	}{
+		{name: "e prefix", path: `C:\media\Show.E3.mkv`},
+		{name: "bare number", path: `C:\media\03.mkv`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			app := test.NewApp()
+			t.Cleanup(app.Quit)
+			store := settings.NewStore(app.Preferences())
+			application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+			application.files = []media.File{{Path: testCase.path, Parsed: media.Parse(testCase.path)}}
+
+			_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{
+				{ID: 11, Name: "One", SeasonNumber: 1, EpisodeNumber: 1},
+				{ID: 12, Name: "Two", SeasonNumber: 1, EpisodeNumber: 2},
+				{ID: 21, Name: "Three", SeasonNumber: 2, EpisodeNumber: 1},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(application.files) != 3 {
+				t.Fatalf("files = %#v", application.files)
+			}
+			paired := application.files[0]
+			if !paired.IsEpisodePairing() || paired.Candidate.Season != 2 || paired.Candidate.Episode != 1 {
+				t.Fatalf("show-wide pairing = %#v", paired)
+			}
+			if paired.Proposed != "Show - S02E01 - Three.mkv" {
+				t.Fatalf("proposal = %q, want canonical season and episode", paired.Proposed)
+			}
+		})
+	}
+}
+
+func TestSeasonTwoImportPairsThreeDigitShowWidePrefix(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	path := `H:\DL\Masters of the universe 1983 S02 CUSTOM MULTi 1080p Bluray HDLight x264\066-MU066-The cat and the Spider(1).mkv`
+	application.files = []media.File{{Path: path, Parsed: media.Parse(path)}}
+
+	episodes := assignShowEpisodeNumbers(
+		[]tmdb.Episode{{ID: 201, Name: "The Cat and the Spider", SeasonNumber: 2, EpisodeNumber: 1}},
+		[]tmdb.Season{
+			{SeasonNumber: 1, EpisodeCount: 65},
+			{SeasonNumber: 2, EpisodeCount: 65},
+		},
+	)
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Masters of the Universe"}, episodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(application.files) != 1 || !application.files[0].IsEpisodePairing() {
+		t.Fatalf("season-two show-wide file remained unmatched: %#v", application.files)
+	}
+	paired := application.files[0]
+	if paired.Candidate.Season != 2 || paired.Candidate.Episode != 1 ||
+		paired.Proposed != "Masters of the Universe - S02E01 - The Cat and the Spider.mkv" {
+		t.Fatalf("show-wide pairing = %#v", paired)
+	}
+}
+
 func TestExpectedEpisodeImportPairsByExactNormalizedTitle(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)

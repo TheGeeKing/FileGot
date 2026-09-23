@@ -29,6 +29,7 @@ type Parsed struct {
 	Year         int
 	Season       int
 	Episode      int
+	ShowEpisode  int
 	MultiEpisode bool
 }
 

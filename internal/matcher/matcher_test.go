@@ -2,6 +2,7 @@ package matcher
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -98,6 +99,48 @@ func TestMatchFallsBackToShowFolder(t *testing.T) {
 	got := engine.Match(context.Background(), []media.File{{Path: path, Parsed: media.Parse(path)}}, options)
 	if got[0].Status != media.Ready || got[0].Parsed.Query != "Folder Show" {
 		t.Fatalf("folder fallback result = %#v", got[0])
+	}
+}
+
+func TestMatchMapsShowWideEpisodeToCanonicalPlacement(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/search/tv":
+			_, _ = writer.Write([]byte(`{"results":[{"id":2,"name":"Show","original_name":"Show"}]}`))
+		case "/tv/2":
+			_, _ = writer.Write([]byte(`{"seasons":[
+				{"season_number":0,"episode_count":1},
+				{"season_number":1,"episode_count":65},
+				{"season_number":2,"episode_count":1}
+			]}`))
+		case "/tv/2/season/1":
+			episodes := make([]tmdb.Episode, 65)
+			for index := range episodes {
+				episodes[index] = tmdb.Episode{ID: index + 1, Name: "Earlier", SeasonNumber: 1, EpisodeNumber: index + 1}
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{"episodes": episodes})
+		case "/tv/2/season/2":
+			_, _ = writer.Write([]byte(`{"episodes":[
+				{"id":21,"name":"Three","season_number":2,"episode_number":1}
+			]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	options := settings.Defaults()
+	options.TMDBToken = "token"
+	engine := New(tmdb.NewWithHTTPClient("token", server.URL, server.Client()))
+	path := "Show.E66.mkv"
+
+	got := engine.Match(context.Background(), []media.File{{Path: path, Parsed: media.Parse(path)}}, options)
+	if got[0].Status != media.Ready || got[0].Candidate.Season != 2 || got[0].Candidate.Episode != 1 {
+		t.Fatalf("show-wide match = %#v", got[0])
+	}
+	if got[0].Proposed != "Show - S02E01 - Three.mkv" {
+		t.Fatalf("proposal = %q, want canonical season and episode", got[0].Proposed)
 	}
 }
 

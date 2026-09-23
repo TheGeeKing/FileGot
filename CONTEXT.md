@@ -20,6 +20,10 @@ _Avoid_: Fuzzy match
 An episode pairing fallback that treats the first numeric filename segment as an episode number. It applies only when that number identifies exactly one unpaired expected episode and exactly one local file.
 _Avoid_: Release code parsing
 
+**Show-wide episode number**:
+An ordinal that identifies an episode by its position across a show's regular seasons, such as `E66` or a bare filename `66`. It is a lookup key that resolves to canonical season-and-episode coordinates; it is not retained as the episode's naming position. Specials are excluded.
+_Avoid_: Absolute output order
+
 **Technical binding**:
 A naming value derived from the structure or encoded streams of a local media file rather than from an external title provider.
 _Avoid_: Probe token

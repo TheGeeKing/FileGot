@@ -80,6 +80,7 @@ type Episode struct {
 	OriginalName  string `json:"original_name"`
 	SeasonNumber  int    `json:"season_number"`
 	EpisodeNumber int    `json:"episode_number"`
+	ShowEpisode   int    `json:"-"`
 	AirDate       string `json:"air_date"`
 	Overview      string `json:"overview"`
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -351,6 +352,17 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 	candidate.Episode = file.Parsed.Episode
 
 	if candidate.Kind == media.Episode {
+		if file.Parsed.ShowEpisode > 0 {
+			season, episodeNumber, err := matcher.canonicalEpisode(ctx, candidate.ID, file.Parsed.ShowEpisode, options.Language)
+			if err != nil {
+				setError(&file, err)
+				return file
+			}
+			file.Parsed.Season = season
+			file.Parsed.Episode = episodeNumber
+			candidate.Season = season
+			candidate.Episode = episodeNumber
+		}
 		episodes, err := matcher.client.SeasonEpisodes(ctx, candidate.ID, candidate.Season, options.Language)
 		if err != nil {
 			setError(&file, err)
@@ -415,6 +427,55 @@ func (matcher *Matcher) Resolve(ctx context.Context, file media.File, candidate 
 	file.Status = media.Ready
 	file.Message = ""
 	return file
+}
+
+func (matcher *Matcher) canonicalEpisode(
+	ctx context.Context,
+	seriesID, showEpisode int,
+	language string,
+) (int, int, error) {
+	seasons, err := matcher.client.ShowSeasons(ctx, seriesID, language)
+	if err != nil {
+		return 0, 0, err
+	}
+	sort.Slice(seasons, func(left, right int) bool {
+		return seasons[left].SeasonNumber < seasons[right].SeasonNumber
+	})
+
+	remaining := showEpisode
+	seen := make(map[int]struct{}, len(seasons))
+	for _, season := range seasons {
+		if season.SeasonNumber <= 0 {
+			continue
+		}
+		if _, duplicate := seen[season.SeasonNumber]; duplicate {
+			return 0, 0, fmt.Errorf("TMDB returned duplicate season %d", season.SeasonNumber)
+		}
+		seen[season.SeasonNumber] = struct{}{}
+
+		episodes, err := matcher.client.SeasonEpisodes(ctx, seriesID, season.SeasonNumber, language)
+		if err != nil {
+			return 0, 0, err
+		}
+		if season.EpisodeCount > 0 && len(episodes) != season.EpisodeCount {
+			return 0, 0, fmt.Errorf(
+				"TMDB season %d returned %d of %d episodes; cannot map show-wide episode %d",
+				season.SeasonNumber, len(episodes), season.EpisodeCount, showEpisode,
+			)
+		}
+		sort.Slice(episodes, func(left, right int) bool {
+			return episodes[left].EpisodeNumber < episodes[right].EpisodeNumber
+		})
+		if remaining <= len(episodes) {
+			episode := episodes[remaining-1]
+			if episode.EpisodeNumber <= 0 {
+				return 0, 0, fmt.Errorf("TMDB season %d has an invalid episode sequence", season.SeasonNumber)
+			}
+			return season.SeasonNumber, episode.EpisodeNumber, nil
+		}
+		remaining -= len(episodes)
+	}
+	return 0, 0, fmt.Errorf("TMDB series has no show-wide episode %d", showEpisode)
 }
 
 func enrichMovieEmbedded(ctx context.Context, client *tmdb.Client, candidate *media.Candidate, options settings.Settings) {

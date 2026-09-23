@@ -67,6 +67,21 @@ func TestParse(t *testing.T) {
 			path: "Show.S01E01E02.mkv",
 			want: Parsed{Kind: Episode, Query: "Show", Season: 1, Episode: 1, MultiEpisode: true},
 		},
+		{
+			name: "show-wide episode with e prefix",
+			path: "Show.E66.mkv",
+			want: Parsed{Kind: Episode, Query: "Show", ShowEpisode: 66},
+		},
+		{
+			name: "bare show-wide episode uses parent show",
+			path: filepath.Join("library", "Show", "66.mkv"),
+			want: Parsed{Kind: Episode, Query: "Show", ShowEpisode: 66},
+		},
+		{
+			name: "explicit season episode wins over show-wide syntax",
+			path: "Show.S02E01.mkv",
+			want: Parsed{Kind: Episode, Query: "Show", Season: 2, Episode: 1},
+		},
 	}
 
 	for _, test := range tests {
