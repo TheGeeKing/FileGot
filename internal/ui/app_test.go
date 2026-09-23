@@ -533,7 +533,7 @@ func TestExpectedEpisodeImportPairsAndDeduplicates(t *testing.T) {
 	}
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
 	application.files = []media.File{{
-		Path:   `C:\media\Show.S01E01.MKV`,
+		Path:   filepath.Join("media", "Show.S01E01.MKV"),
 		Parsed: media.Parsed{Kind: media.Episode, Query: "Show", Season: 1, Episode: 1},
 	}}
 	show := tmdb.Show{ID: 42, Name: "Show", FirstAirDate: "2024-01-01"}
@@ -571,8 +571,8 @@ func TestExpectedEpisodeImportPairsShowWideNumbersToCanonicalPlacement(t *testin
 		name string
 		path string
 	}{
-		{name: "e prefix", path: `C:\media\Show.E3.mkv`},
-		{name: "bare number", path: `C:\media\03.mkv`},
+		{name: "e prefix", path: filepath.Join("media", "Show.E3.mkv")},
+		{name: "bare number", path: filepath.Join("media", "03.mkv")},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			app := test.NewApp()
@@ -609,7 +609,7 @@ func TestSeasonTwoImportPairsThreeDigitShowWidePrefix(t *testing.T) {
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
-	path := `H:\DL\Masters of the universe 1983 S02 CUSTOM MULTi 1080p Bluray HDLight x264\066-MU066-The cat and the Spider(1).mkv`
+	path := filepath.Join("media", "Masters of the universe 1983 S02 CUSTOM MULTi 1080p Bluray HDLight x264", "066-MU066-The cat and the Spider(1).mkv")
 	application.files = []media.File{{Path: path, Parsed: media.Parse(path)}}
 
 	episodes := assignShowEpisodeNumbers(
@@ -639,10 +639,8 @@ func TestExpectedEpisodeImportPairsByExactNormalizedTitle(t *testing.T) {
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
-	application.files = []media.File{{
-		Path:   `C:\media\20-MU001-The cosmic comet.mkv`,
-		Parsed: media.Parse(`C:\media\20-MU001-The cosmic comet.mkv`),
-	}}
+	path := filepath.Join("media", "20-MU001-The cosmic comet.mkv")
+	application.files = []media.File{{Path: path, Parsed: media.Parse(path)}}
 
 	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
 		Name: "The Cosmic Comet", SeasonNumber: 1, EpisodeNumber: 20,
@@ -662,7 +660,7 @@ func TestExpectedEpisodeImportPairsTitleBeforeParenthesizedSuffix(t *testing.T) 
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
-	path := `H:\DL\Masters of the universe 1983 S01 REPACK CUSTOM MULTi 1080p Bluray HDLight x264\02-MU006-Teela's Quest(1).mkv`
+	path := filepath.Join("media", "Masters of the universe 1983 S01 REPACK CUSTOM MULTi 1080p Bluray HDLight x264", "02-MU006-Teela's Quest(1).mkv")
 	application.files = []media.File{{Path: path, Parsed: media.Parse(path)}}
 
 	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Masters of the Universe"}, []tmdb.Episode{{
@@ -681,7 +679,7 @@ func TestExpectedEpisodeImportPairsByUniqueLeadingEpisodeNumber(t *testing.T) {
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
-	path := `H:\DL\Masters of the universe 1983 S01 REPACK CUSTOM MULTi 1080p Bluray HDLight x264\01-MU004-Diamond Ray of Disappearance.mkv`
+	path := filepath.Join("media", "Masters of the universe 1983 S01 REPACK CUSTOM MULTi 1080p Bluray HDLight x264", "01-MU004-Diamond Ray of Disappearance.mkv")
 	application.files = []media.File{{Path: path, Parsed: media.Parse(path)}}
 
 	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Les Maîtres de l'univers"}, []tmdb.Episode{{
@@ -701,7 +699,7 @@ func TestLeadingEpisodeNumberPairingRefusesMultipleSeasons(t *testing.T) {
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
-	application.files = []media.File{{Path: `C:\media\01-MU004-English title.mkv`}}
+	application.files = []media.File{{Path: filepath.Join("media", "01-MU004-English title.mkv")}}
 
 	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{
 		{Name: "Titre français un", SeasonNumber: 1, EpisodeNumber: 1},
@@ -723,8 +721,8 @@ func TestLeadingEpisodeNumberPairingRefusesCompetingLocalFiles(t *testing.T) {
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
 	application.files = []media.File{
-		{Path: `C:\media\01-MU004-English title.mkv`},
-		{Path: `C:\media\01-MU999-Another title.mkv`},
+		{Path: filepath.Join("media", "01-MU004-English title.mkv")},
+		{Path: filepath.Join("media", "01-MU999-Another title.mkv")},
 	}
 
 	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
@@ -746,8 +744,8 @@ func TestExactTitlePairingRefusesCompetingLocalFiles(t *testing.T) {
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
 	application.files = []media.File{
-		{Path: `C:\media\first-The cosmic comet.mkv`},
-		{Path: `C:\media\second-The cosmic comet.mkv`},
+		{Path: filepath.Join("media", "first-The cosmic comet.mkv")},
+		{Path: filepath.Join("media", "second-The cosmic comet.mkv")},
 	}
 
 	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
@@ -769,7 +767,7 @@ func TestExactTitlePairingNormalizesCaseAndSeparators(t *testing.T) {
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
-	application.files = []media.File{{Path: `C:\media\prefix_THE.cosmic_COMET_suffix.mkv`}}
+	application.files = []media.File{{Path: filepath.Join("media", "prefix_THE.cosmic_COMET_suffix.mkv")}}
 
 	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
 		Name: "The Cosmic Comet", SeasonNumber: 1, EpisodeNumber: 20,
@@ -787,7 +785,7 @@ func TestExactTitlePairingRequiresCompleteTitle(t *testing.T) {
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
-	application.files = []media.File{{Path: `C:\media\MU001-Cosmic comet.mkv`}}
+	application.files = []media.File{{Path: filepath.Join("media", "MU001-Cosmic comet.mkv")}}
 
 	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
 		Name: "The Cosmic Comet", SeasonNumber: 1, EpisodeNumber: 20,
@@ -807,7 +805,7 @@ func TestExactTitlePairingPreservesMeaningfulPunctuation(t *testing.T) {
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
-	application.files = []media.File{{Path: `C:\media\Show-Rock Roll.mkv`}}
+	application.files = []media.File{{Path: filepath.Join("media", "Show-Rock Roll.mkv")}}
 
 	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
 		Name: "Rock & Roll", SeasonNumber: 1, EpisodeNumber: 1,
@@ -827,7 +825,7 @@ func TestExactTitlePairingRefusesDuplicateExpectedTitles(t *testing.T) {
 	t.Cleanup(app.Quit)
 	store := settings.NewStore(app.Preferences())
 	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
-	application.files = []media.File{{Path: `C:\media\Show-Pilot.mkv`}}
+	application.files = []media.File{{Path: filepath.Join("media", "Show-Pilot.mkv")}}
 
 	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{
 		{Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1},
