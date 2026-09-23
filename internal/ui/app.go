@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"fyne.io/fyne/v2"
@@ -22,6 +23,7 @@ import (
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	xwidget "fyne.io/x/fyne/widget"
 
 	"github.com/TheGeeKing/FileGot/internal/matcher"
 	"github.com/TheGeeKing/FileGot/internal/media"
@@ -438,19 +440,24 @@ func (application *Application) importShow() {
 		return
 	}
 	client := application.tmdbClient(options.TMDBToken)
-	queryEntry := widget.NewEntry()
+	queryEntry := xwidget.NewCompletionEntry(nil)
 	queryEntry.SetPlaceHolder("TV show title")
 	showSelect := widget.NewSelect(nil, nil)
 	seasonSelect := widget.NewSelect(nil, nil)
-	message := widget.NewLabel("Search for a show, select it, then load its seasons.")
+	episodeSelect := widget.NewSelect(nil, nil)
+	message := widget.NewLabel("")
 	message.Wrapping = fyne.TextWrapWord
 	var shows []tmdb.Show
 	var seasons []tmdb.Season
+	var episodes []tmdb.Episode
 	var importDialog dialog.Dialog
+	var searchTimer *time.Timer
+	changingSelection := false
+	requestGeneration := 0
 
 	searchButton := widget.NewButton("Search TMDB", nil)
 	loadSeasonsButton := widget.NewButton("Load Seasons", nil)
-	importButton := widget.NewButton("Import Episodes", nil)
+	importButton := widget.NewButtonWithIcon("Import", theme.ContentAddIcon(), nil)
 	cancelButton := widget.NewButton("Cancel Request", func() {
 		if application.cancel != nil {
 			application.cancel()
@@ -458,9 +465,13 @@ func (application *Application) importShow() {
 		}
 	})
 	closeButton := widget.NewButton("Close", func() {
+		if searchTimer != nil {
+			searchTimer.Stop()
+		}
 		if application.cancel != nil {
 			application.cancel()
 		}
+		queryEntry.HideCompletion()
 		importDialog.Hide()
 	})
 	setRequestState := func(running bool) {
@@ -470,7 +481,7 @@ func (application *Application) importShow() {
 		}
 		setEnabled(searchButton, !running)
 		setEnabled(loadSeasonsButton, !running && len(shows) > 0)
-		setEnabled(importButton, !running && len(seasons) > 0)
+		setEnabled(importButton, !running && len(episodes) > 0)
 		setEnabled(cancelButton, running)
 		application.updateButtons()
 	}
@@ -482,6 +493,8 @@ func (application *Application) importShow() {
 			message.SetText("Enter a TV show title.")
 			return
 		}
+		requestGeneration++
+		generation := requestGeneration
 		ctx, cancel := context.WithCancel(context.Background())
 		application.cancel = cancel
 		setRequestState(true)
@@ -489,6 +502,9 @@ func (application *Application) importShow() {
 		go func() {
 			results, err := client.SearchTV(ctx, query, 0, options.Language, options.IncludeAdult)
 			fyne.Do(func() {
+				if generation != requestGeneration {
+					return
+				}
 				setRequestState(false)
 				if ctx.Err() != nil {
 					message.SetText("Search cancelled. Try again when ready.")
@@ -498,31 +514,44 @@ func (application *Application) importShow() {
 					message.SetText("Show search failed: " + err.Error())
 					return
 				}
+				if len(results) > 10 {
+					results = results[:10]
+				}
 				shows = results
 				seasons = nil
+				episodes = nil
 				labels := make([]string, len(results))
 				for index, show := range results {
 					labels[index] = fmt.Sprintf("%s (%s) — TMDB %d", show.Name, optionalDateYear(show.FirstAirDate), show.ID)
 				}
+				changingSelection = true
 				showSelect.SetOptions(labels)
+				queryEntry.SetOptions(labels)
 				seasonSelect.SetOptions(nil)
+				episodeSelect.SetOptions(nil)
+				changingSelection = false
 				if len(labels) == 0 {
+					queryEntry.HideCompletion()
 					message.SetText("No shows found. Try a different title.")
 					return
 				}
-				showSelect.SetSelectedIndex(0)
-				loadSeasonsButton.Enable()
-				message.SetText(fmt.Sprintf("%d show(s) found. Select the correct result.", len(labels)))
+				message.SetText("")
+				queryEntry.ShowCompletion()
 			})
 		}()
 	}
 
 	loadSeasonsButton.OnTapped = func() {
+		if changingSelection {
+			return
+		}
 		selected := showSelect.SelectedIndex()
 		if selected < 0 || selected >= len(shows) {
 			message.SetText("Select a show first.")
 			return
 		}
+		requestGeneration++
+		generation := requestGeneration
 		ctx, cancel := context.WithCancel(context.Background())
 		application.cancel = cancel
 		setRequestState(true)
@@ -530,6 +559,9 @@ func (application *Application) importShow() {
 		go func() {
 			results, err := client.ShowSeasons(ctx, shows[selected].ID, options.Language)
 			fyne.Do(func() {
+				if generation != requestGeneration {
+					return
+				}
 				setRequestState(false)
 				if ctx.Err() != nil {
 					message.SetText("Season loading cancelled. Existing rows were not changed.")
@@ -540,21 +572,31 @@ func (application *Application) importShow() {
 					return
 				}
 				seasons = results
+				episodes = nil
 				labels := []string{"All seasons"}
 				for _, season := range results {
 					labels = append(labels, fmt.Sprintf("%s (%d episodes)", season.Name, season.EpisodeCount))
 				}
+				changingSelection = true
 				seasonSelect.SetOptions(labels)
-				seasonSelect.SetSelectedIndex(0)
-				importButton.Enable()
-				message.SetText("Choose one season or All seasons.")
+				episodeSelect.SetOptions(nil)
+				changingSelection = false
+				message.SetText("Choose one season or All seasons; episodes load automatically.")
+				application.window.Canvas().Focus(seasonSelect)
 			})
 		}()
 	}
 
-	importButton.OnTapped = func() {
+	loadEpisodes := func() {
+		if changingSelection {
+			return
+		}
 		showIndex := showSelect.SelectedIndex()
 		seasonIndex := seasonSelect.SelectedIndex()
+		episodes = nil
+		changingSelection = true
+		episodeSelect.SetOptions(nil)
+		changingSelection = false
 		if showIndex < 0 || showIndex >= len(shows) || seasonIndex < 0 {
 			message.SetText("Select a show and season first.")
 			return
@@ -569,47 +611,143 @@ func (application *Application) importShow() {
 			message.SetText("The selected show has no importable seasons.")
 			return
 		}
+		requestGeneration++
+		generation := requestGeneration
 		ctx, cancel := context.WithCancel(context.Background())
 		application.cancel = cancel
 		setRequestState(true)
 		message.SetText("Loading episodes…")
 		go func(show tmdb.Show) {
-			episodes, err := loadShowEpisodes(ctx, client, show.ID, numbers, options.Language)
-			episodes = assignShowEpisodeNumbers(episodes, seasons)
+			loaded, err := loadShowEpisodes(ctx, client, show.ID, numbers, options.Language)
+			loaded = assignShowEpisodeNumbers(loaded, seasons)
 			fyne.Do(func() {
+				if generation != requestGeneration {
+					return
+				}
 				setRequestState(false)
 				if ctx.Err() != nil {
 					message.SetText("Episode import cancelled. Existing rows were not changed.")
 					return
 				}
 				if err != nil {
-					message.SetText("Episode import failed; existing rows were not changed: " + err.Error())
+					message.SetText("Could not load episodes: " + err.Error() + ". Choose the season again to retry.")
 					return
 				}
-				if len(episodes) == 0 {
-					message.SetText("The selected season returned no episodes; existing rows were not changed.")
+				if len(loaded) == 0 {
+					message.SetText("No episodes are available for the selected season.")
 					return
 				}
-				added, err := application.importEpisodes(show, episodes)
-				if err != nil {
-					message.SetText("Episode import failed: " + err.Error())
-					return
+				episodes = loaded
+				labels := []string{fmt.Sprintf("All episodes (%d)", len(episodes))}
+				for _, episode := range episodes {
+					labels = append(labels, fmt.Sprintf("S%02dE%02d — %s", episode.SeasonNumber, episode.EpisodeNumber, episode.Name))
 				}
-				importDialog.Hide()
-				application.setStatus(fmt.Sprintf("Imported %d expected episode(s).", added))
-				application.refresh()
+				changingSelection = true
+				episodeSelect.SetOptions(labels)
+				episodeSelect.SetSelectedIndex(0)
+				changingSelection = false
+				setRequestState(false)
+				message.SetText("Episodes are ready. Choose what to import, then select Import.")
+				application.window.Canvas().Focus(episodeSelect)
 			})
 		}(shows[showIndex])
 	}
 
+	importButton.OnTapped = func() {
+		showIndex := showSelect.SelectedIndex()
+		episodeIndex := episodeSelect.SelectedIndex()
+		if showIndex < 0 || showIndex >= len(shows) || episodeIndex < 0 || len(episodes) == 0 {
+			message.SetText("Select a show, season, and episode first.")
+			return
+		}
+		selected := episodes
+		if episodeIndex > 0 && episodeIndex-1 < len(episodes) {
+			selected = episodes[episodeIndex-1 : episodeIndex]
+		}
+		added, err := application.importEpisodes(shows[showIndex], selected)
+		if err != nil {
+			message.SetText("Episode import failed: " + err.Error())
+			return
+		}
+		importDialog.Hide()
+		application.setStatus(fmt.Sprintf("Imported %d expected episode(s).", added))
+		application.refresh()
+	}
+
+	showSelect.OnChanged = func(string) {
+		if changingSelection {
+			return
+		}
+		selected := showSelect.SelectedIndex()
+		seasons = nil
+		episodes = nil
+		changingSelection = true
+		seasonSelect.SetOptions(nil)
+		episodeSelect.SetOptions(nil)
+		changingSelection = false
+		setRequestState(false)
+		if selected < 0 || selected >= len(shows) {
+			return
+		}
+		loadSeasonsButton.OnTapped()
+	}
+	seasonSelect.OnChanged = func(string) { loadEpisodes() }
+	episodeSelect.OnChanged = func(string) { setRequestState(false) }
+
+	queueSearch := func(query string) {
+		for index, show := range shows {
+			label := fmt.Sprintf("%s (%s) — TMDB %d", show.Name, optionalDateYear(show.FirstAirDate), show.ID)
+			if query == label {
+				queryEntry.HideCompletion()
+				showSelect.SetSelectedIndex(index)
+				return
+			}
+		}
+		requestGeneration++
+		if application.cancel != nil {
+			application.cancel()
+		}
+		query = strings.TrimSpace(query)
+		seasons = nil
+		episodes = nil
+		changingSelection = true
+		seasonSelect.SetOptions(nil)
+		episodeSelect.SetOptions(nil)
+		changingSelection = false
+		setRequestState(false)
+		if len([]rune(query)) < 2 {
+			message.SetText("")
+			return
+		}
+		if searchTimer == nil {
+			searchTimer = time.AfterFunc(750*time.Millisecond, func() {
+				fyne.Do(func() {
+					searchTimer = nil
+					if len([]rune(strings.TrimSpace(queryEntry.Text))) >= 2 {
+						searchButton.OnTapped()
+					}
+				})
+			})
+		}
+	}
+	queryEntry.OnChanged = queueSearch
+	queryEntry.OnSubmitted = func(query string) {
+		if searchTimer != nil {
+			searchTimer.Stop()
+			searchTimer = nil
+		}
+		if len([]rune(strings.TrimSpace(query))) >= 2 {
+			searchButton.OnTapped()
+		}
+	}
 	content := container.NewVBox(
 		widget.NewForm(
-			widget.NewFormItem("Search", queryEntry),
-			widget.NewFormItem("Show", showSelect),
+			widget.NewFormItem("Title", queryEntry),
 			widget.NewFormItem("Season", seasonSelect),
+			widget.NewFormItem("Episodes", episodeSelect),
 		),
 		message,
-		container.NewHBox(searchButton, loadSeasonsButton, importButton, cancelButton, closeButton),
+		container.NewHBox(importButton, cancelButton, closeButton),
 	)
 	importDialog = dialog.NewCustomWithoutButtons("Import Show", content, application.window)
 	importDialog.Resize(fyne.NewSize(720, 420))

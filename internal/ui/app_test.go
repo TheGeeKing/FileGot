@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	xwidget "fyne.io/x/fyne/widget"
 
 	"github.com/TheGeeKing/FileGot/internal/matcher"
 	"github.com/TheGeeKing/FileGot/internal/media"
@@ -157,6 +158,27 @@ func TestMainWindowPresentation(t *testing.T) {
 	selectedBackground, _ := fileCellParts(selectedCell)
 	if got, want := rgba(selectedBackground.FillColor), rgba(theme.ColorForWidget(theme.ColorNameSelection, application.table)); got != want {
 		t.Fatalf("selected row color = %#v, want %#v", got, want)
+	}
+}
+
+func TestTypingContinuesWhileSuggestionsAreOpen(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	window := app.NewWindow("suggestions")
+	entry := xwidget.NewCompletionEntry([]string{"abc"})
+	window.SetContent(entry)
+	window.Show()
+	window.Canvas().Focus(entry)
+	test.Type(window.Canvas().Focused(), "ab")
+	entry.ShowCompletion()
+
+	if window.Canvas().Focused() == nil {
+		t.Fatal("suggestions left no focused keyboard target")
+	}
+	test.Type(window.Canvas().Focused(), "c")
+
+	if entry.Text != "abc" {
+		t.Fatalf("text after opening suggestions = %q, want %q", entry.Text, "abc")
 	}
 }
 
