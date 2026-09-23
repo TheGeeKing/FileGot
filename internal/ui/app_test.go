@@ -544,6 +544,237 @@ func TestExpectedEpisodeImportPairsAndDeduplicates(t *testing.T) {
 	}
 }
 
+func TestExpectedEpisodeImportPairsByExactNormalizedTitle(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{
+		Path:   `C:\media\20-MU001-The cosmic comet.mkv`,
+		Parsed: media.Parse(`C:\media\20-MU001-The cosmic comet.mkv`),
+	}}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
+		Name: "The Cosmic Comet", SeasonNumber: 1, EpisodeNumber: 20,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(application.files) != 1 || !application.files[0].IsEpisodePairing() ||
+		application.files[0].Candidate.Episode != 20 {
+		t.Fatalf("title-matched row = %#v", application.files)
+	}
+}
+
+func TestExpectedEpisodeImportPairsTitleBeforeParenthesizedSuffix(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	path := `H:\DL\Masters of the universe 1983 S01 REPACK CUSTOM MULTi 1080p Bluray HDLight x264\02-MU006-Teela's Quest(1).mkv`
+	application.files = []media.File{{Path: path, Parsed: media.Parse(path)}}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Masters of the Universe"}, []tmdb.Episode{{
+		Name: "Teela's Quest", SeasonNumber: 1, EpisodeNumber: 6,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(application.files) != 1 || !application.files[0].IsEpisodePairing() {
+		t.Fatalf("parenthesized suffix prevented title pairing: %#v", application.files)
+	}
+}
+
+func TestExpectedEpisodeImportPairsByUniqueLeadingEpisodeNumber(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	path := `H:\DL\Masters of the universe 1983 S01 REPACK CUSTOM MULTi 1080p Bluray HDLight x264\01-MU004-Diamond Ray of Disappearance.mkv`
+	application.files = []media.File{{Path: path, Parsed: media.Parse(path)}}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Les Maîtres de l'univers"}, []tmdb.Episode{{
+		Name: "Le rayon de la disparition", SeasonNumber: 1, EpisodeNumber: 1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(application.files) != 1 || !application.files[0].IsEpisodePairing() ||
+		application.files[0].Candidate.Episode != 1 {
+		t.Fatalf("leading episode number did not pair: %#v", application.files)
+	}
+}
+
+func TestLeadingEpisodeNumberPairingRefusesMultipleSeasons(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{Path: `C:\media\01-MU004-English title.mkv`}}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{
+		{Name: "Titre français un", SeasonNumber: 1, EpisodeNumber: 1},
+		{Name: "Titre français deux", SeasonNumber: 2, EpisodeNumber: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range application.files {
+		if file.IsEpisodePairing() {
+			t.Fatalf("repeated episode number across seasons should remain unpaired: %#v", application.files)
+		}
+	}
+}
+
+func TestLeadingEpisodeNumberPairingRefusesCompetingLocalFiles(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{
+		{Path: `C:\media\01-MU004-English title.mkv`},
+		{Path: `C:\media\01-MU999-Another title.mkv`},
+	}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
+		Name: "Titre français", SeasonNumber: 1, EpisodeNumber: 1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range application.files {
+		if file.IsEpisodePairing() {
+			t.Fatalf("competing leading episode numbers should remain unpaired: %#v", application.files)
+		}
+	}
+}
+
+func TestExactTitlePairingRefusesCompetingLocalFiles(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{
+		{Path: `C:\media\first-The cosmic comet.mkv`},
+		{Path: `C:\media\second-The cosmic comet.mkv`},
+	}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
+		Name: "The Cosmic Comet", SeasonNumber: 1, EpisodeNumber: 20,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, file := range application.files {
+		if file.IsEpisodePairing() {
+			t.Fatalf("competing files should remain unpaired: %#v", application.files)
+		}
+	}
+}
+
+func TestExactTitlePairingNormalizesCaseAndSeparators(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{Path: `C:\media\prefix_THE.cosmic_COMET_suffix.mkv`}}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
+		Name: "The Cosmic Comet", SeasonNumber: 1, EpisodeNumber: 20,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(application.files) != 1 || !application.files[0].IsEpisodePairing() {
+		t.Fatalf("normalized title did not pair: %#v", application.files)
+	}
+}
+
+func TestExactTitlePairingRequiresCompleteTitle(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{Path: `C:\media\MU001-Cosmic comet.mkv`}}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
+		Name: "The Cosmic Comet", SeasonNumber: 1, EpisodeNumber: 20,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range application.files {
+		if file.IsEpisodePairing() {
+			t.Fatalf("partial title should remain unpaired: %#v", application.files)
+		}
+	}
+}
+
+func TestExactTitlePairingPreservesMeaningfulPunctuation(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{Path: `C:\media\Show-Rock Roll.mkv`}}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{{
+		Name: "Rock & Roll", SeasonNumber: 1, EpisodeNumber: 1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range application.files {
+		if file.IsEpisodePairing() {
+			t.Fatalf("different punctuation should remain unpaired: %#v", application.files)
+		}
+	}
+}
+
+func TestExactTitlePairingRefusesDuplicateExpectedTitles(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{Path: `C:\media\Show-Pilot.mkv`}}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{
+		{Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1},
+		{Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range application.files {
+		if file.IsEpisodePairing() {
+			t.Fatalf("duplicate expected titles should remain unpaired: %#v", application.files)
+		}
+	}
+}
+
+func TestEpisodeIdentifierPairingPrecedesConflictingExactTitle(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	application.files = []media.File{{
+		Path:   `C:\media\Show.S01E01.Second.mkv`,
+		Parsed: media.Parsed{Kind: media.Episode, Season: 1, Episode: 1},
+	}}
+
+	_, err := application.importEpisodes(tmdb.Show{ID: 42, Name: "Show"}, []tmdb.Episode{
+		{Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1},
+		{Name: "Second", SeasonNumber: 1, EpisodeNumber: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !application.files[0].IsEpisodePairing() || application.files[0].Candidate.Episode != 1 {
+		t.Fatalf("identifier did not take precedence: %#v", application.files)
+	}
+}
+
 func TestAutomaticPairingRefusesAmbiguousExpectedEpisodes(t *testing.T) {
 	app := test.NewApp()
 	t.Cleanup(app.Quit)

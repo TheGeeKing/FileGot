@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"image/color"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -29,6 +31,8 @@ import (
 	"github.com/TheGeeKing/FileGot/internal/settings"
 	"github.com/TheGeeKing/FileGot/internal/tmdb"
 )
+
+var leadingEpisodeNumberPattern = regexp.MustCompile(`^0*([1-9]\d{0,2})(?:[\s._-]+)`)
 
 type Application struct {
 	app            fyne.App
@@ -737,18 +741,138 @@ func (application *Application) reconcileExpectedEpisodes() {
 			continue
 		}
 
-		paired, err := pairEpisode(local, application.files[expectedIndex], options)
-		if err != nil {
-			application.files[localIndex].Status = media.Error
-			application.files[localIndex].Message = err.Error()
-			continue
-		}
-		application.files[localIndex] = paired
-		application.files = append(application.files[:expectedIndex], application.files[expectedIndex+1:]...)
-		if expectedIndex < localIndex {
+		if application.applyEpisodePairing(localIndex, expectedIndex, options) {
 			localIndex--
 		}
 	}
+
+	for localIndex := 0; localIndex < len(application.files); localIndex++ {
+		local := application.files[localIndex]
+		episode, found := leadingEpisodeNumber(local.Path)
+		if local.Imported || local.Path == "" || local.Parsed.MultiEpisode || !found {
+			continue
+		}
+
+		expectedIndex := -1
+		for index, expected := range application.files {
+			if !expected.IsExpectedEpisode() || expected.Candidate.Episode != episode {
+				continue
+			}
+			if expectedIndex >= 0 {
+				expectedIndex = -1
+				break
+			}
+			expectedIndex = index
+		}
+		if expectedIndex < 0 {
+			continue
+		}
+
+		matchingLocals := 0
+		for _, candidate := range application.files {
+			candidateEpisode, candidateFound := leadingEpisodeNumber(candidate.Path)
+			if !candidate.Imported && !candidate.Parsed.MultiEpisode && candidateFound && candidateEpisode == episode {
+				matchingLocals++
+			}
+		}
+		if matchingLocals != 1 {
+			continue
+		}
+		if application.applyEpisodePairing(localIndex, expectedIndex, options) {
+			localIndex--
+		}
+	}
+
+	for localIndex := 0; localIndex < len(application.files); localIndex++ {
+		local := application.files[localIndex]
+		if local.Imported || local.Path == "" || local.Parsed.MultiEpisode {
+			continue
+		}
+
+		expectedIndex := -1
+		for index, expected := range application.files {
+			if !expected.IsExpectedEpisode() ||
+				!filenameContainsEpisodeTitle(local.Path, expected.Candidate.EpisodeTitle) {
+				continue
+			}
+			if expectedIndex >= 0 {
+				expectedIndex = -1
+				break
+			}
+			expectedIndex = index
+		}
+		if expectedIndex < 0 {
+			continue
+		}
+		matchingLocals := 0
+		for _, candidate := range application.files {
+			if !candidate.Imported && candidate.Path != "" && !candidate.Parsed.MultiEpisode &&
+				filenameContainsEpisodeTitle(candidate.Path, application.files[expectedIndex].Candidate.EpisodeTitle) {
+				matchingLocals++
+			}
+		}
+		if matchingLocals != 1 {
+			continue
+		}
+
+		if application.applyEpisodePairing(localIndex, expectedIndex, options) {
+			localIndex--
+		}
+	}
+}
+
+func leadingEpisodeNumber(path string) (int, bool) {
+	filename := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	match := leadingEpisodeNumberPattern.FindStringSubmatch(filename)
+	if match == nil {
+		return 0, false
+	}
+	episode, err := strconv.Atoi(match[1])
+	return episode, err == nil
+}
+
+func (application *Application) applyEpisodePairing(localIndex, expectedIndex int, options settings.Settings) bool {
+	paired, err := pairEpisode(application.files[localIndex], application.files[expectedIndex], options)
+	if err != nil {
+		application.files[localIndex].Status = media.Error
+		application.files[localIndex].Message = err.Error()
+		return false
+	}
+	application.files[localIndex] = paired
+	application.files = append(application.files[:expectedIndex], application.files[expectedIndex+1:]...)
+	return expectedIndex < localIndex
+}
+
+func filenameContainsEpisodeTitle(path, title string) bool {
+	filename := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	normalizedFilename := normalizeEpisodeTitle(filename)
+	normalizedTitle := normalizeEpisodeTitle(title)
+	return normalizedTitle != "" && containsAtTokenBoundaries(normalizedFilename, normalizedTitle)
+}
+
+func normalizeEpisodeTitle(value string) string {
+	return strings.Join(strings.FieldsFunc(strings.ToLower(value), func(character rune) bool {
+		return unicode.IsSpace(character) || character == '.' || character == '_' || character == '-'
+	}), " ")
+}
+
+func containsAtTokenBoundaries(value, target string) bool {
+	valueRunes := []rune(value)
+	targetRunes := []rune(target)
+	for start := 0; start+len(targetRunes) <= len(valueRunes); start++ {
+		end := start + len(targetRunes)
+		if string(valueRunes[start:end]) != target ||
+			start > 0 && isTitleWordRune(valueRunes[start-1]) ||
+			end < len(valueRunes) && isTitleWordRune(valueRunes[end]) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func isTitleWordRune(character rune) bool {
+	return unicode.IsLetter(character) || unicode.IsNumber(character)
 }
 
 func isUnpairedEpisodeFile(file media.File) bool {

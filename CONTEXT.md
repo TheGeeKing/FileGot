@@ -12,6 +12,14 @@ _Avoid_: Placeholder file, imported file
 The association of a local video file with one expected episode, made automatically from a unique season-and-episode identifier or selected manually.
 _Avoid_: Metadata match
 
+**Exact-title episode pairing**:
+An episode pairing fallback that uses a complete expected episode title found in a normalized local filename. It applies only when the title identifies exactly one unpaired expected episode and does not use approximate similarity.
+_Avoid_: Fuzzy match
+
+**Leading-number episode pairing**:
+An episode pairing fallback that treats the first numeric filename segment as an episode number. It applies only when that number identifies exactly one unpaired expected episode and exactly one local file.
+_Avoid_: Release code parsing
+
 **Technical binding**:
 A naming value derived from the structure or encoded streams of a local media file rather than from an external title provider.
 _Avoid_: Probe token
