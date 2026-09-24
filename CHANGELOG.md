@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/TheGeeKing/FileGot/compare/v0.3.0...v0.3.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **ui:** make episode pairing fixtures portable ([9098d46](https://github.com/TheGeeKing/FileGot/commit/9098d46167f551130f469acfa0f01c9dd5c7d4e2))
+
 ## [0.3.0](https://github.com/TheGeeKing/FileGot/compare/v0.2.0...v0.3.0) (2026-09-23)
 
 
