@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -1009,6 +1010,83 @@ func TestManualExpectedPairingCanChangeAndRemove(t *testing.T) {
 	}
 	if expectedCount != 2 || localCount != 1 {
 		t.Fatalf("removed manual pairing = %#v", application.files)
+	}
+}
+
+func TestBulkExpectedAlignmentPreservesSelectionOrder(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	store := settings.NewStore(app.Preferences())
+	application := New(app, store, rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	if _, err := application.importEpisodes(tmdb.Show{ID: 1, Name: "Show"}, []tmdb.Episode{
+		{Name: "One", SeasonNumber: 1, EpisodeNumber: 1},
+		{Name: "Two", SeasonNumber: 1, EpisodeNumber: 2},
+		{Name: "Three", SeasonNumber: 1, EpisodeNumber: 3},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	application.files = append(application.files,
+		media.File{Path: "b.mkv", Parsed: media.Parsed{Kind: media.Episode}},
+		media.File{Path: "a.mkv", Parsed: media.Parsed{Kind: media.Episode}},
+	)
+
+	preview, err := application.expectedAlignmentPreview([]int{3, 4}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(preview, []string{"b.mkv → S01E02 Two", "a.mkv → S01E03 Three"}) {
+		t.Fatalf("preview = %#v", preview)
+	}
+	if err := application.alignExpectedEpisodes([]int{3, 4}, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	paired := map[string]int{}
+	for _, file := range application.files {
+		if file.IsEpisodePairing() {
+			paired[file.Path] = file.Candidate.Episode
+		}
+	}
+	if paired["b.mkv"] != 2 || paired["a.mkv"] != 3 {
+		t.Fatalf("bulk pairings = %#v", paired)
+	}
+}
+
+func TestBulkExpectedAlignmentRefusesOccupiedRangeWithoutChanges(t *testing.T) {
+	app := test.NewApp()
+	t.Cleanup(app.Quit)
+	application := New(app, settings.NewStore(app.Preferences()), rename.NewManager(filepath.Join(t.TempDir(), "rename.json")))
+	if _, err := application.importEpisodes(tmdb.Show{ID: 1, Name: "Show"}, []tmdb.Episode{
+		{Name: "One", SeasonNumber: 1, EpisodeNumber: 1},
+		{Name: "Two", SeasonNumber: 1, EpisodeNumber: 2},
+		{Name: "Three", SeasonNumber: 1, EpisodeNumber: 3},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	application.files = append(application.files,
+		media.File{Path: "occupied.mkv", Parsed: media.Parsed{Kind: media.Episode}},
+		media.File{Path: "first.mkv", Parsed: media.Parsed{Kind: media.Episode}},
+		media.File{Path: "second.mkv", Parsed: media.Parsed{Kind: media.Episode}},
+	)
+	if err := application.pairExpected(3, 1); err != nil {
+		t.Fatal(err)
+	}
+	before := append([]media.File(nil), application.files...)
+	target := -1
+	locals := []int{}
+	for index, file := range application.files {
+		if file.IsExpectedEpisode() && file.Candidate.Episode == 1 {
+			target = index
+		}
+		if file.Path == "first.mkv" || file.Path == "second.mkv" {
+			locals = append(locals, index)
+		}
+	}
+	if err := application.alignExpectedEpisodes(locals, target); err == nil {
+		t.Fatal("alignment across an occupied episode should fail")
+	}
+	if !reflect.DeepEqual(application.files, before) {
+		t.Fatal("failed alignment changed files")
 	}
 }
 

@@ -67,6 +67,7 @@ type Application struct {
 	clearButton        *widget.Button
 	matchButton        *widget.Button
 	reviewButton       *widget.Button
+	alignButton        *widget.Button
 	mediaDetailsButton *widget.Button
 	renameButton       *widget.Button
 	metadataButton     *widget.Button
@@ -186,12 +187,14 @@ func (application *Application) build() {
 		application.updateButtons()
 	}
 	application.table.menu = application.contextActions
+	application.table.onDrop = application.dropExpectedAlignment
 
 	application.importShowButton = widget.NewButtonWithIcon("Import Show", theme.ContentAddIcon(), application.importShow)
 	application.removeButton = widget.NewButtonWithIcon("Remove", theme.ContentRemoveIcon(), application.removeSelected)
 	application.clearButton = widget.NewButtonWithIcon("Clear", theme.ContentClearIcon(), application.clear)
 	application.matchButton = widget.NewButtonWithIcon("Match", theme.SearchIcon(), application.matchOrCancel)
 	application.reviewButton = widget.NewButtonWithIcon("Review", theme.VisibilityIcon(), application.reviewSelected)
+	application.alignButton = widget.NewButtonWithIcon("Align Episodes", theme.NavigateNextIcon(), application.showExpectedAlignment)
 	application.mediaDetailsButton = widget.NewButtonWithIcon("Media Details", theme.InfoIcon(), application.showMediaDetails)
 	application.renameButton = widget.NewButtonWithIcon("Rename", theme.ConfirmIcon(), application.confirmRename)
 	application.renameButton.Importance = widget.HighImportance
@@ -238,6 +241,7 @@ func (application *Application) build() {
 		widget.NewSeparator(),
 		application.matchButton,
 		application.reviewButton,
+		application.alignButton,
 		application.mediaDetailsButton,
 		application.renameButton,
 		application.metadataButton,
@@ -1183,6 +1187,102 @@ func (application *Application) pairExpected(localIndex, expectedIndex int) erro
 	return nil
 }
 
+type episodeAlignmentSlot struct {
+	index     int
+	candidate media.Candidate
+	expected  bool
+}
+
+func (application *Application) expectedAlignment(localIndices []int, expectedIndex int) ([]episodeAlignmentSlot, error) {
+	if len(localIndices) == 0 || expectedIndex < 0 || expectedIndex >= len(application.files) ||
+		!application.files[expectedIndex].IsExpectedEpisode() {
+		return nil, fmt.Errorf("choose local episode files and an expected episode")
+	}
+	for _, index := range localIndices {
+		if index < 0 || index >= len(application.files) || !isUnpairedEpisodeFile(application.files[index]) {
+			return nil, fmt.Errorf("only unpaired local episode files can be aligned")
+		}
+	}
+
+	target := application.files[expectedIndex].Candidate
+	slots := make([]episodeAlignmentSlot, 0)
+	for index, file := range application.files {
+		if !file.Imported || file.Candidate.ID != target.ID || file.Candidate.Kind != media.Episode {
+			continue
+		}
+		slots = append(slots, episodeAlignmentSlot{index: index, candidate: file.Candidate, expected: file.IsExpectedEpisode()})
+	}
+	sort.Slice(slots, func(left, right int) bool {
+		if slots[left].candidate.Season != slots[right].candidate.Season {
+			return slots[left].candidate.Season < slots[right].candidate.Season
+		}
+		return slots[left].candidate.Episode < slots[right].candidate.Episode
+	})
+	start := -1
+	for index, slot := range slots {
+		if slot.index == expectedIndex {
+			start = index
+			break
+		}
+	}
+	if start < 0 || start+len(localIndices) > len(slots) {
+		return nil, fmt.Errorf("not enough consecutive expected episodes remain")
+	}
+	selected := slots[start : start+len(localIndices)]
+	for _, slot := range selected {
+		if !slot.expected {
+			return nil, fmt.Errorf("destination range includes S%02dE%02d, which is already paired", slot.candidate.Season, slot.candidate.Episode)
+		}
+	}
+	return selected, nil
+}
+
+func (application *Application) expectedAlignmentPreview(localIndices []int, expectedIndex int) ([]string, error) {
+	slots, err := application.expectedAlignment(localIndices, expectedIndex)
+	if err != nil {
+		return nil, err
+	}
+	preview := make([]string, len(slots))
+	for index, slot := range slots {
+		preview[index] = fmt.Sprintf("%s → S%02dE%02d %s", filepath.Base(application.files[localIndices[index]].Path),
+			slot.candidate.Season, slot.candidate.Episode, slot.candidate.EpisodeTitle)
+	}
+	return preview, nil
+}
+
+func (application *Application) alignExpectedEpisodes(localIndices []int, expectedIndex int) error {
+	slots, err := application.expectedAlignment(localIndices, expectedIndex)
+	if err != nil {
+		return err
+	}
+	localPaths := make([]string, len(localIndices))
+	for index, localIndex := range localIndices {
+		localPaths[index] = application.files[localIndex].Path
+	}
+	trial := &Application{files: append([]media.File(nil), application.files...), settings: application.settings}
+	for index, slot := range slots {
+		localIndex, destinationIndex := -1, -1
+		for fileIndex, file := range trial.files {
+			if file.Path == localPaths[index] && !file.Imported {
+				localIndex = fileIndex
+			}
+			if file.IsExpectedEpisode() && file.Candidate.ID == slot.candidate.ID &&
+				file.Candidate.Season == slot.candidate.Season && file.Candidate.Episode == slot.candidate.Episode {
+				destinationIndex = fileIndex
+			}
+		}
+		if localIndex < 0 || destinationIndex < 0 {
+			return fmt.Errorf("episode alignment changed before it could be applied")
+		}
+		if err := trial.pairExpected(localIndex, destinationIndex); err != nil {
+			return err
+		}
+	}
+	application.files = trial.files
+	application.clearSelection()
+	return nil
+}
+
 func (application *Application) unpairExpected(index int) error {
 	if index < 0 || index >= len(application.files) {
 		return fmt.Errorf("invalid pairing selection")
@@ -1545,6 +1645,120 @@ func (application *Application) reviewSelected() {
 	reviewDialog.SetOnClosed(cancelReview)
 	reviewDialog.Resize(fyne.NewSize(700, 500))
 	reviewDialog.Show()
+}
+
+func (application *Application) alignmentSelection() []int {
+	indices := application.selectedIndices()
+	if len(indices) == 0 {
+		return nil
+	}
+	for _, index := range indices {
+		if index < 0 || index >= len(application.files) || !isUnpairedEpisodeFile(application.files[index]) {
+			return nil
+		}
+	}
+	return indices
+}
+
+func (application *Application) canAlignExpectedEpisodes() bool {
+	if application.busy || len(application.alignmentSelection()) == 0 {
+		return false
+	}
+	for _, file := range application.files {
+		if file.IsExpectedEpisode() {
+			return true
+		}
+	}
+	return false
+}
+
+func (application *Application) dropExpectedAlignment(expectedIndex int) {
+	localIndices := application.alignmentSelection()
+	if len(localIndices) == 0 || expectedIndex < 0 || expectedIndex >= len(application.files) ||
+		!application.files[expectedIndex].IsExpectedEpisode() {
+		application.setStatus("Drop selected local episodes onto an expected episode row.")
+		return
+	}
+	preview, err := application.expectedAlignmentPreview(localIndices, expectedIndex)
+	if err != nil {
+		dialog.ShowError(err, application.window)
+		return
+	}
+	dialog.ShowConfirm("Align episodes", strings.Join(preview, "\n"), func(confirmed bool) {
+		if !confirmed {
+			return
+		}
+		if err := application.alignExpectedEpisodes(localIndices, expectedIndex); err != nil {
+			dialog.ShowError(err, application.window)
+			return
+		}
+		application.setStatus(fmt.Sprintf("Aligned %d episode file(s).", len(localIndices)))
+		application.refresh()
+	}, application.window)
+}
+
+func (application *Application) showExpectedAlignment() {
+	localIndices := application.alignmentSelection()
+	if len(localIndices) == 0 {
+		return
+	}
+	expected := make([]int, 0)
+	for index, file := range application.files {
+		if file.IsExpectedEpisode() {
+			expected = append(expected, index)
+		}
+	}
+	sort.Slice(expected, func(left, right int) bool {
+		a, b := application.files[expected[left]].Candidate, application.files[expected[right]].Candidate
+		if a.Title != b.Title {
+			return strings.ToLower(a.Title) < strings.ToLower(b.Title)
+		}
+		if a.Season != b.Season {
+			return a.Season < b.Season
+		}
+		return a.Episode < b.Episode
+	})
+	selected := -1
+	preview := widget.NewLabel("Choose the first expected episode.")
+	preview.Wrapping = fyne.TextWrapWord
+	list := widget.NewList(
+		func() int { return len(expected) },
+		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func(id widget.ListItemID, object fyne.CanvasObject) {
+			candidate := application.files[expected[id]].Candidate
+			object.(*widget.Label).SetText(fmt.Sprintf("%s — S%02dE%02d — %s", candidate.Title, candidate.Season, candidate.Episode, candidate.EpisodeTitle))
+		},
+	)
+	var alignmentDialog dialog.Dialog
+	apply := widget.NewButtonWithIcon("Apply Alignment", theme.ConfirmIcon(), func() {
+		if selected < 0 {
+			return
+		}
+		if err := application.alignExpectedEpisodes(localIndices, expected[selected]); err != nil {
+			preview.SetText(err.Error())
+			return
+		}
+		alignmentDialog.Hide()
+		application.setStatus(fmt.Sprintf("Aligned %d episode file(s).", len(localIndices)))
+		application.refresh()
+	})
+	apply.Disable()
+	list.OnSelected = func(id widget.ListItemID) {
+		selected = id
+		lines, err := application.expectedAlignmentPreview(localIndices, expected[id])
+		if err != nil {
+			preview.SetText(err.Error())
+			apply.Disable()
+			return
+		}
+		preview.SetText("Preview:\n" + strings.Join(lines, "\n"))
+		apply.Enable()
+	}
+	content := container.NewBorder(preview, apply, nil, nil, list)
+	content.Resize(fyne.NewSize(640, 420))
+	alignmentDialog = dialog.NewCustom("Align selected episodes", "Cancel", content, application.window)
+	alignmentDialog.Resize(fyne.NewSize(680, 500))
+	alignmentDialog.Show()
 }
 
 func (application *Application) reviewExpectedPairing(index int) {
@@ -2028,6 +2242,7 @@ func (application *Application) updateButtons() {
 	setEnabled(application.removeButton, application.canRemove())
 	setEnabled(application.clearButton, !application.busy && len(application.files) > 0)
 	setEnabled(application.reviewButton, application.canReview())
+	setEnabled(application.alignButton, application.canAlignExpectedEpisodes())
 	setEnabled(application.mediaDetailsButton, application.canShowMediaDetails())
 	setEnabled(application.renameButton, application.canRename())
 	setEnabled(application.metadataButton, !application.busy && len(application.metadataFiles()) > 0)
@@ -2398,6 +2613,9 @@ type fileTable struct {
 	widget.Table
 	modifiers    fyne.KeyModifier
 	contextClick bool
+	dragPosition fyne.Position
+	dragging     bool
+	onDrop       func(int)
 	menu         func() (*fyne.MenuItem, *fyne.MenuItem, *fyne.MenuItem, *fyne.MenuItem)
 }
 
@@ -2429,6 +2647,32 @@ func (table *fileTable) Tapped(event *fyne.PointEvent) {
 func (table *fileTable) TypedKey(event *fyne.KeyEvent) {
 	table.modifiers = 0
 	table.Table.TypedKey(event)
+}
+
+func (table *fileTable) Dragged(event *fyne.DragEvent) {
+	table.dragging = true
+	table.dragPosition = event.Position
+}
+
+func (table *fileTable) DragEnd() {
+	if !table.dragging || table.onDrop == nil {
+		table.dragging = false
+		return
+	}
+	table.dragging = false
+	table.contextClick = true
+	original := table.OnSelected
+	table.OnSelected = func(id widget.TableCellID) {
+		table.OnSelected = original
+		table.contextClick = false
+		table.Unselect(id)
+		table.onDrop(id.Row - 1)
+	}
+	table.Table.Tapped(&fyne.PointEvent{Position: table.dragPosition, AbsolutePosition: table.dragPosition})
+	if table.contextClick {
+		table.OnSelected = original
+		table.contextClick = false
+	}
 }
 
 func (table *fileTable) TappedSecondary(event *fyne.PointEvent) {
