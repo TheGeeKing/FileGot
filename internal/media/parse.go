@@ -46,7 +46,7 @@ var releaseTags = map[string]struct{}{
 	"h265": {}, "hevc": {}, "av1": {}, "hdr": {}, "dv": {}, "aac": {}, "dts": {},
 	"truehd": {}, "atmos": {},
 	// Unambiguous scene language / audio tags (safe case-insensitive).
-	"truefrench": {}, "vostfr": {}, "vff": {}, "vfi": {}, "vfq": {}, "vf2": {},
+	"truefrench": {}, "vostfr": {}, "vof": {}, "vff": {}, "vfi": {}, "vfq": {}, "vf2": {},
 	"multi": {}, "dual": {}, "dubbed": {}, "subbed": {},
 }
 

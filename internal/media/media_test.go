@@ -28,6 +28,26 @@ func TestParse(t *testing.T) {
 			want: Parsed{Kind: Movie, Query: "La Petite Derniere"},
 		},
 		{
+			name: "VOF language tag stripped",
+			path: "La.Petite.Derniere.VOF.mkv",
+			want: Parsed{Kind: Movie, Query: "La Petite Derniere"},
+		},
+		{
+			name: "lowercase vof language tag stripped",
+			path: "La.Petite.Derniere.vof.1080p.mkv",
+			want: Parsed{Kind: Movie, Query: "La Petite Derniere"},
+		},
+		{
+			name: "VOF language tag stripped from parent show",
+			path: filepath.Join("library", "Show.VOF", "Season 1", "S01E03.mkv"),
+			want: Parsed{Kind: Episode, Query: "Show", Season: 1, Episode: 3},
+		},
+		{
+			name: "vof substring kept in title",
+			path: "Vofland.mkv",
+			want: Parsed{Kind: Movie, Query: "Vofland"},
+		},
+		{
 			name: "language word kept when title case",
 			path: "The.French.Connection.1971.mkv",
 			want: Parsed{Kind: Movie, Query: "The French Connection", Year: 1971},
