@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/TheGeeKing/FileGot/compare/v0.3.1...v0.4.0) (2026-10-25)
+
+
+### Features
+
+* **ui:** add bulk episode alignment ([af6adfe](https://github.com/TheGeeKing/FileGot/commit/af6adfe06a61d575adcfb52f6828253e496df723))
+
+
+### Bug Fixes
+
+* **media:** recognize vof as a language tag ([95761d8](https://github.com/TheGeeKing/FileGot/commit/95761d859ee84ce345878d8f869f3b634534c5cf))
+
 ## [0.3.1](https://github.com/TheGeeKing/FileGot/compare/v0.3.0...v0.3.1) (2026-09-23)
 
 
